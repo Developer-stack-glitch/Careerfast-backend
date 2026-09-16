@@ -1,0 +1,115 @@
+# =========================
+# Node Modules
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# Build files
+# =========================
+build/
+dist/
+.next/
+out/
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# =========================
+# Firebase (IMPORTANT 🔒)
+# =========================
+firebaseServiceAccount.json
+config/firebaseServiceAccount.json
+*.key.json
+
+# =========================
+# Logs
+# =========================
+logs
+*.log
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDE / Editor files
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Dependency directories
+# =========================
+jspm_packages/
+
+# =========================
+# Optional npm cache
+# =========================
+.npm
+
+# =========================
+# Optional eslint cache
+# =========================
+.eslintcache
+
+# =========================
+# Parcel / Vite / Cache
+# =========================
+.cache/
+.parcel-cache/
+.vite/
+
+# =========================
+# Coverage reports
+# =========================
+coverage/
+
+# =========================
+# Temporary files
+# =========================
+tmp/
+temp/
+
+# =========================
+# Mac system files
+# =========================
+.AppleDouble
+.LSOverride
+
+# =========================
+# Linux system files
+# =========================
+*~
+
+# =========================
+# Windows system files
+# =========================
+ehthumbs.db
+Desktop.ini
+
+# =========================
+# PM2 logs
+# =========================
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# =========================
+# Optional uploads (if any)
+# =========================
+uploads/career_fast_live.sql
+career_fast_live.sql

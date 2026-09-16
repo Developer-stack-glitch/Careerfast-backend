@@ -1,0 +1,49 @@
+const pool = require("./dbConfig");
+
+/**
+ * Automatically creates necessary database performance indexes if they do not already exist.
+ * This guarantees fast query execution and prevents full table scans on large datasets.
+ */
+async function ensureDatabaseIndexes() {
+  const ensureIndex = async (table, indexName, columns) => {
+    try {
+      const [rows] = await pool.query(
+        `SHOW INDEX FROM ${table} WHERE Key_name = ?`,
+        [indexName]
+      );
+      if (rows.length === 0) {
+        await pool.query(`CREATE INDEX ${indexName} ON ${table} (${columns})`);
+        console.log(`⚡ [DB Index] Created index ${indexName} on ${table}(${columns})`);
+      }
+    } catch (err) {
+      // Don't crash server if table doesn't exist or column type prevents index
+      console.warn(`⚠️ [DB Index] Could not check/create index ${indexName} on ${table}:`, err.message);
+    }
+  };
+
+  try {
+    // Indexes on `users`
+    await ensureIndex("users", "idx_users_role_active", "role_id, is_active, created_date");
+    await ensureIndex("users", "idx_users_created_date", "created_date");
+    await ensureIndex("users", "idx_users_location", "location(50)");
+    await ensureIndex("users", "idx_users_gender", "gender(10)");
+
+    // Indexes on `user_professional`
+    await ensureIndex("user_professional", "idx_user_prof_user_del", "user_id, is_deleted");
+    await ensureIndex("user_professional", "idx_user_prof_curr", "user_id, currently_working, is_deleted");
+    await ensureIndex("user_professional", "idx_user_prof_title", "job_title(100)");
+    await ensureIndex("user_professional", "idx_user_prof_comp", "company_name(100)");
+    await ensureIndex("user_professional", "idx_user_prof_desig", "designation(100)");
+
+    // Indexes on `user_education`
+    await ensureIndex("user_education", "idx_user_edu_user_del", "user_id, is_deleted");
+    await ensureIndex("user_education", "idx_user_edu_course", "course(100)");
+    await ensureIndex("user_education", "idx_user_edu_qual", "qualification(50)");
+
+    console.log("✅ [DB Index] Database search indexes verified successfully");
+  } catch (error) {
+    console.warn("⚠️ [DB Index] Index verification warning:", error.message);
+  }
+}
+
+module.exports = ensureDatabaseIndexes;
