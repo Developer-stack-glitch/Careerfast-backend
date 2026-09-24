@@ -41,6 +41,38 @@ const login = async (request, response) => {
         }
       }
 
+      // ✅ Check if user is a sub-recruiter
+      try {
+        const [subRows] = await pool.query(
+          `SELECT sr.id, sr.main_recruiter_id, sr.designation, sr.role_preset, sr.permissions, sr.status,
+                  hp.company_name
+           FROM sub_recruiters sr
+           LEFT JOIN hr_profiles hp ON sr.main_recruiter_id = hp.user_id
+           WHERE sr.sub_recruiter_id = ? AND sr.status = 'active'
+           LIMIT 1`,
+          [result[0].id]
+        );
+        if (subRows && subRows.length > 0) {
+          let perms = subRows[0].permissions;
+          if (typeof perms === 'string') {
+            try { perms = JSON.parse(perms); } catch (e) { perms = {}; }
+          }
+          result[0].is_sub_recruiter = true;
+          result[0].sub_recruiter_info = {
+            id: subRows[0].id,
+            main_recruiter_id: subRows[0].main_recruiter_id,
+            company_name: subRows[0].company_name || result[0].organization || 'Company',
+            designation: subRows[0].designation || 'Recruiter',
+            role_preset: subRows[0].role_preset || 'recruiter',
+            permissions: perms
+          };
+        } else {
+          result[0].is_sub_recruiter = false;
+        }
+      } catch (subErr) {
+        console.warn("⚠️ Failed to check sub-recruiter on login:", subErr.message);
+      }
+
       return response.status(200).json({
         message: "Login successful",
         token: token,

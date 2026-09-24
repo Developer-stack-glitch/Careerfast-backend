@@ -2,7 +2,7 @@ const pool = require("../config/dbConfig");
 const bcrypt = require("bcrypt");
 
 const UserModel = {
-  getUsers: async (page = null, limit = null, search = "", status = "", role = null) => {
+  getUsers: async (page = null, limit = null, search = "", status = "", role = null, startDate = null, endDate = null, timeFilter = null) => {
     try {
       // Calculate global stats (respecting search, ignoring status)
       let baseQuery = `SELECT u.is_active FROM users u WHERE 1=1`;
@@ -19,6 +19,43 @@ const UserModel = {
         const searchPattern = `%${search}%`;
         baseParams.push(searchPattern, searchPattern, searchPattern);
       }
+
+      let dateCondition = "";
+      let dateParams = [];
+      if (startDate && endDate) {
+        dateCondition = " AND (DATE(COALESCE(u.last_active, u.created_date)) BETWEEN ? AND ? OR DATE(u.created_date) BETWEEN ? AND ?)";
+        dateParams = [startDate, endDate, startDate, endDate];
+      } else if (startDate) {
+        dateCondition = " AND (DATE(COALESCE(u.last_active, u.created_date)) >= ? OR DATE(u.created_date) >= ?)";
+        dateParams = [startDate, startDate];
+      } else if (endDate) {
+        dateCondition = " AND (DATE(COALESCE(u.last_active, u.created_date)) <= ? OR DATE(u.created_date) <= ?)";
+        dateParams = [endDate, endDate];
+      } else if (timeFilter) {
+        if (timeFilter === "Today") {
+          dateCondition = " AND (DATE(COALESCE(u.last_active, u.created_date)) = CURDATE() OR DATE(u.created_date) = CURDATE())";
+        } else if (timeFilter === "Yesterday") {
+          dateCondition = " AND (DATE(COALESCE(u.last_active, u.created_date)) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) OR DATE(u.created_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY))";
+        } else if (timeFilter === "Last 7 Days") {
+          dateCondition = " AND (COALESCE(u.last_active, u.created_date) >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR u.created_date >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
+        } else if (timeFilter === "Last 30 Days") {
+          dateCondition = " AND (COALESCE(u.last_active, u.created_date) >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY))";
+        } else if (timeFilter === "This Month") {
+          dateCondition = " AND (COALESCE(u.last_active, u.created_date) >= DATE_FORMAT(NOW(), '%Y-%m-01') OR u.created_date >= DATE_FORMAT(NOW(), '%Y-%m-01'))";
+        } else if (timeFilter === "Last Month") {
+          dateCondition = " AND ((COALESCE(u.last_active, u.created_date) >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND COALESCE(u.last_active, u.created_date) < DATE_FORMAT(NOW(), '%Y-%m-01')) OR (u.created_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.created_date < DATE_FORMAT(NOW(), '%Y-%m-01')))";
+        } else if (timeFilter === "This Quarter") {
+          dateCondition = " AND (COALESCE(u.last_active, u.created_date) >= DATE_SUB(NOW(), INTERVAL 3 MONTH) OR u.created_date >= DATE_SUB(NOW(), INTERVAL 3 MONTH))";
+        } else if (timeFilter === "This Year") {
+          dateCondition = " AND (COALESCE(u.last_active, u.created_date) >= DATE_SUB(NOW(), INTERVAL 1 YEAR) OR u.created_date >= DATE_SUB(NOW(), INTERVAL 1 YEAR))";
+        }
+      }
+
+      if (dateCondition) {
+        baseQuery += dateCondition;
+        baseParams.push(...dateParams);
+      }
+
       const statsQuery = `
         SELECT 
           COUNT(*) as total,
@@ -48,6 +85,11 @@ const UserModel = {
         query += ` AND (u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ?)`;
         const searchPattern = `%${search}%`;
         queryParams.push(searchPattern, searchPattern, searchPattern);
+      }
+
+      if (dateCondition) {
+        query += dateCondition;
+        queryParams.push(...dateParams);
       }
 
       // If status filter is passed (active/pending)
@@ -256,14 +298,19 @@ const UserModel = {
     start_year,
     end_year,
     gender,
-    resume
+    resume,
+    languages,
+    visa_status,
+    preferred_job_type,
+    dob,
+    company_headcount
   ) => {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
       // Update profile image
       const [personal] = await conn.query(
-        `UPDATE users SET profile_image = ?, is_email_verified = ?, user_type = ?, experince_type = ?, total_years = ?, total_months = ?, class = ?, course = ?, start_year = ?, end_year = ?, gender = ?, resume = ? WHERE id = ?`,
+        `UPDATE users SET profile_image = ?, is_email_verified = ?, user_type = ?, experince_type = ?, total_years = ?, total_months = ?, class = ?, course = ?, start_year = ?, end_year = ?, gender = ?, resume = ?, languages = ?, visa_status = ?, preferred_job_type = ?, dob = ?, company_headcount = ? WHERE id = ?`,
         [
           profile_image,
           (is_email_verified === "verified" || is_email_verified === "Verified") ? 1 : 0,  // ✅ convert to 1/0
@@ -277,6 +324,11 @@ const UserModel = {
           end_year,
           gender,
           resume,
+          languages ? JSON.stringify(languages) : null,
+          visa_status || null,
+          preferred_job_type ? JSON.stringify(preferred_job_type) : null,
+          dob || null,
+          company_headcount || null,
           user_id,
         ]
       );
@@ -417,7 +469,7 @@ const UserModel = {
   },
 
   updateBasicDetails: async (
-    first_name,
+    first_name_or_data,
     last_name,
     gender,
     user_type,
@@ -432,23 +484,125 @@ const UserModel = {
     user_id
   ) => {
     try {
-      const query = `UPDATE users SET first_name = ?, last_name = ?, gender = ?, user_type = ?, class = ?, course = ?, start_year = ?, end_year = ?, experince_type = ?, total_years = ?, total_months = ?, location = ? WHERE id = ?`;
-      const params = [
-        first_name,
-        last_name,
-        gender,
-        user_type,
-        classes,
-        course,
-        start_year,
-        end_year,
-        experince_type,
-        total_years,
-        total_months,
-        location,
-        user_id,
+      let data = {};
+      if (typeof first_name_or_data === "object" && first_name_or_data !== null) {
+        data = first_name_or_data;
+      } else {
+        data = {
+          first_name: first_name_or_data,
+          last_name,
+          gender,
+          user_type,
+          class: classes,
+          course,
+          start_year,
+          end_year,
+          experince_type,
+          total_years,
+          total_months,
+          location,
+          user_id,
+        };
+      }
+
+      const uid = data.user_id || data.id;
+      if (!uid) {
+        throw new Error("Invalid user ID");
+      }
+
+      // Handle name splitting if provided as single string
+      let firstName = data.first_name || data.firstName;
+      let lastName = data.last_name || data.lastName;
+      if (data.name && (!firstName || !lastName)) {
+        const parts = String(data.name).trim().split(" ");
+        if (!firstName) firstName = parts[0] || "";
+        if (!lastName) lastName = parts.slice(1).join(" ") || "";
+      }
+
+      // Handle location combining
+      let loc = data.location;
+      if (!loc && (data.city || data.state)) {
+        loc = [data.city, data.state].filter(Boolean).join(", ");
+      }
+
+      // Handle experience type & years
+      let expType = data.experince_type || data.experience_type;
+      if (data.is_fresher !== undefined) {
+        expType = data.is_fresher ? "Fresher" : "Experience";
+      }
+      let totYears = data.total_years !== undefined ? data.total_years : data.experience;
+      let totMonths = data.total_months;
+
+      // Handle user type / job title
+      let userTypeVal = data.user_type || data.job_title || data.jobTitle;
+
+      // Handle job preferences stored in preferred_job_type
+      let preferredJobTypeVal = data.preferred_job_type;
+      if (
+        !preferredJobTypeVal &&
+        (data.preferred_roles ||
+          data.preferred_locations ||
+          data.work_mode ||
+          data.job_type ||
+          data.expected_salary ||
+          data.notice_period ||
+          data.relocation)
+      ) {
+        preferredJobTypeVal = JSON.stringify({
+          preferredRoles: data.preferred_roles || [],
+          preferredLocations: data.preferred_locations || [],
+          workMode: data.work_mode || [],
+          jobType: data.job_type || [],
+          expectedSalary: data.expected_salary || "",
+          noticePeriod: data.notice_period || null,
+          relocation: data.relocation || null,
+        });
+      }
+
+      // Build dynamic SET fields so we only update fields that were actually provided
+      const updates = [];
+      const params = [];
+
+      const fieldMappings = [
+        { key: firstName, col: "first_name" },
+        { key: lastName, col: "last_name" },
+        { key: data.gender, col: "gender" },
+        { key: data.dob, col: "dob" },
+        { key: loc, col: "location" },
+        { key: userTypeVal, col: "user_type" },
+        { key: expType, col: "experince_type" },
+        { key: totYears, col: "total_years" },
+        { key: totMonths, col: "total_months" },
+        { key: data.class || data.classes, col: "class" },
+        { key: data.course, col: "course" },
+        { key: data.start_year, col: "start_year" },
+        { key: data.end_year, col: "end_year" },
+        { key: data.about, col: "about" },
+        { key: preferredJobTypeVal, col: "preferred_job_type" },
+        {
+          key: data.languages
+            ? typeof data.languages === "string"
+              ? data.languages
+              : JSON.stringify(data.languages)
+            : undefined,
+          col: "languages",
+        },
+        { key: data.visa_status, col: "visa_status" },
       ];
 
+      for (const item of fieldMappings) {
+        if (item.key !== undefined && item.key !== null) {
+          updates.push(`${item.col} = ?`);
+          params.push(item.key);
+        }
+      }
+
+      if (updates.length === 0) {
+        return 0;
+      }
+
+      params.push(uid);
+      const query = `UPDATE users SET ${updates.join(", ")} WHERE id = ?`;
       const [result] = await pool.query(query, params);
       return result.affectedRows;
     } catch (error) {
@@ -604,6 +758,15 @@ const UserModel = {
                         u.total_years,
                         u.total_months,
                         u.location,
+                        u.languages,
+                        u.visa_status,
+                        u.preferred_job_type,
+                        u.dob,
+                        u.company_headcount,
+                        u.visibility_mode,
+                        u.hidden_companies,
+                        u.allow_contact,
+                        u.show_in_search,
                         u.created_date,
                         COALESCE(u.last_active, (SELECT MAX(created_at) FROM user_daily_usage WHERE user_id = u.id), u.updated_date, u.created_date) AS last_active,
                         ot.name AS organization_type
@@ -690,9 +853,21 @@ const UserModel = {
       ]);
 
       const getUsers = result.map((row) => {
+        let hiddenCompanies = [];
+        try {
+          if (row.hidden_companies) {
+            hiddenCompanies = typeof row.hidden_companies === 'string' ? JSON.parse(row.hidden_companies) : row.hidden_companies;
+          }
+        } catch (e) {
+          hiddenCompanies = [];
+        }
         return {
           ...row,
           skills: row.skills ? JSON.parse(row.skills) : [],
+          visibility_mode: row.visibility_mode || 'Limited',
+          hidden_companies: Array.isArray(hiddenCompanies) ? hiddenCompanies : [],
+          allow_contact: row.allow_contact === null || row.allow_contact === undefined ? true : Boolean(row.allow_contact),
+          show_in_search: row.show_in_search === null || row.show_in_search === undefined ? true : Boolean(row.show_in_search),
         };
       });
 
@@ -735,6 +910,7 @@ const UserModel = {
           h.map_location,
           h.contact_phone,
           h.contact_email,
+          CASE WHEN u.is_email_verified = 1 THEN 1 ELSE 0 END AS is_email_verified,
           s.facebook,
           s.twitter,
           s.instagram,

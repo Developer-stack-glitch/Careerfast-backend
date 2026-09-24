@@ -40,6 +40,20 @@ async function ensureDatabaseIndexes() {
     await ensureIndex("user_education", "idx_user_edu_course", "course(100)");
     await ensureIndex("user_education", "idx_user_edu_qual", "qualification(50)");
 
+    // Ensure industry_types table exists
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS industry_types (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          name VARCHAR(255) NOT NULL UNIQUE,
+          is_active BIT(1) DEFAULT b'1',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+      `);
+    } catch (tblErr) {
+      console.warn("⚠️ [DB] industry_types check:", tblErr.message);
+    }
+
     console.log("✅ [DB Index] Database search indexes verified successfully");
   } catch (error) {
     console.warn("⚠️ [DB Index] Index verification warning:", error.message);

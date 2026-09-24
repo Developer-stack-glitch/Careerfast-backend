@@ -41,7 +41,7 @@ exports.googleLogin = async (req, res) => {
 
         // Create JWT
         const accessToken = jwt.sign(
-            { id: user.id, email: user.email },
+            { id: user.id, email: user.email, role_id: user.role_id },
             process.env.JWT_SECRET,
             { expiresIn: "7d" }
         );

@@ -7,6 +7,7 @@ const pool = require("../config/dbConfig");
 const crypto = require("crypto");
 const UserModel = require("../models/UserModel");
 const EmailModel = require("../models/EmailModel");
+const SubRecruiterModel = require("../models/SubRecruiterModel");
 
 const insertJobNature = async (request, response) => {
   const { nature_name } = request.body;
@@ -265,6 +266,106 @@ const jobPosting = async (request, response) => {
   const formattedLanguages = Array.isArray(languages) ? languages : [languages].filter(Boolean);
 
   try {
+    // 🛡️ Plan Limit Enforcement for Recruiters
+    const recruiterUserId = user_id || request.user?.id;
+    let activeUsageRecordId = null;
+    let subRecruiterRecord = null;
+
+    if (recruiterUserId) {
+      let effectiveRecruiterId = recruiterUserId;
+
+      // 🛡️ Check if this user is a Sub-Recruiter
+      subRecruiterRecord = await SubRecruiterModel.getSubRecruiterByUserId(recruiterUserId);
+      if (subRecruiterRecord) {
+        effectiveRecruiterId = subRecruiterRecord.main_recruiter_id;
+        const perms = subRecruiterRecord.permissions || {};
+
+        if (perms.can_post_jobs === false) {
+          return response.status(403).send({
+            message: "Permission Denied",
+            details: "Your sub-recruiter account does not have permission to post jobs. Please contact your company administrator."
+          });
+        }
+
+        // Check if sub-recruiter has a dedicated split quota for jobs
+        if (perms.quota_mode === 'split' && perms.allocated_job_posts !== null && perms.allocated_job_posts !== undefined) {
+          const subAllocated = Number(perms.allocated_job_posts);
+          const subUsed = Number(perms.used_job_posts || 0);
+          if (subUsed >= subAllocated) {
+            return response.status(403).send({
+              message: "Sub-Recruiter Quota Limit Reached",
+              details: `You have reached your allocated job posting limit (${subUsed} of ${subAllocated} jobs). Please contact your primary recruiter.`
+            });
+          }
+        }
+      }
+
+      const [subRows] = await pool.query(`
+        SELECT rs.*, sp.job_post_limit, sp.active_job_limit, sp.name AS plan_name,
+               COALESCE(su.job_posts_used, 0) AS job_posts_used, su.id AS usage_id
+        FROM recruiter_subscriptions rs
+        INNER JOIN subscription_plans sp ON rs.plan_id = sp.id
+        LEFT JOIN subscription_usage su ON rs.id = su.subscription_id
+        WHERE rs.recruiter_id = ?
+        ORDER BY rs.id DESC LIMIT 1
+      `, [effectiveRecruiterId]);
+
+      if (subRows.length > 0) {
+        const sub = subRows[0];
+        activeUsageRecordId = sub.usage_id;
+        const now = new Date();
+
+        if (new Date(sub.expiry_date) < now || sub.status === 'Expired') {
+          return response.status(403).send({
+            message: "Subscription Expired",
+            details: "Your subscription plan has expired. Please upgrade or renew your plan to post jobs."
+          });
+        }
+
+        if (sub.status === 'Suspended') {
+          return response.status(403).send({
+            message: "Account Suspended",
+            details: "Your recruiter account is currently suspended. Please contact the administrator."
+          });
+        }
+
+        // Get all recruiter IDs in this company workspace
+        const [teamSubs] = await pool.query(
+          `SELECT sub_recruiter_id FROM sub_recruiters WHERE main_recruiter_id = ?`,
+          [effectiveRecruiterId]
+        );
+        const companyUids = [effectiveRecruiterId, ...teamSubs.map(t => t.sub_recruiter_id)];
+
+        // Check real total jobs used across company vs plan limit
+        const [totalJobRows] = await pool.query(
+          `SELECT COUNT(*) as count FROM job_post WHERE user_id IN (?)`,
+          [companyUids]
+        );
+        const companyTotalJobs = Math.max(Number(sub.job_posts_used || 0), Number(totalJobRows[0]?.count || 0));
+
+        // 1. Monthly job posting limit check
+        if (companyTotalJobs >= sub.job_post_limit) {
+          return response.status(403).send({
+            message: "Monthly Job Posting Limit Reached",
+            details: `Monthly job posting limit reached. Your company has used ${companyTotalJobs} of ${sub.job_post_limit} available job posts. Upgrade your plan to post more jobs.`
+          });
+        }
+
+        // 2. Maximum active jobs limit check (company-wide live active slots)
+        const [activeCountRows] = await pool.query(
+          `SELECT COUNT(*) AS count FROM job_post WHERE user_id IN (?) AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
+          [companyUids]
+        );
+        const companyActiveJobs = Number(activeCountRows[0]?.count || 0);
+        if (companyActiveJobs >= sub.active_job_limit) {
+          return response.status(403).send({
+            message: "Maximum Active Job Limit Reached",
+            details: `Your company has reached its maximum active job limit (${companyActiveJobs} of ${sub.active_job_limit} active slots). Close an existing active job or upgrade your plan before posting a new job.`
+          });
+        }
+      }
+    }
+
     const result = await JobsModel.jobPosting(
       user_id,
       company_name,
@@ -317,6 +418,19 @@ const jobPosting = async (request, response) => {
       internship_start_date,
       last_date_to_apply
     );
+
+    // Increment monthly job posts used upon successful posting
+    if (activeUsageRecordId) {
+      await pool.query(
+        `UPDATE subscription_usage SET job_posts_used = job_posts_used + 1 WHERE id = ?`,
+        [activeUsageRecordId]
+      ).catch(err => console.error("⚠️ Failed to increment job_posts_used:", err.message));
+    }
+
+    // Increment sub-recruiter job posts used if applicable
+    if (subRecruiterRecord) {
+      await SubRecruiterModel.incrementSubRecruiterUsage(recruiterUserId, 'job_post');
+    }
 
     return response.status(201).send({
       message: "Job posted successfully. Waiting for admin approval.",
@@ -621,6 +735,28 @@ const updateSkills = async (request, response) => {
   } catch (error) {
     response.status(500).json({
       message: "Error while updating",
+      details: error.message,
+    });
+  }
+};
+
+const updateVisibility = async (request, response) => {
+  const { visibility_mode, hidden_companies, allow_contact, show_in_search, user_id } = request.body;
+  try {
+    const result = await JobsModel.updateVisibility({
+      visibility_mode,
+      hidden_companies,
+      allow_contact,
+      show_in_search,
+      user_id
+    });
+    response.status(200).send({
+      message: "Visibility updated successfully",
+      data: result,
+    });
+  } catch (error) {
+    response.status(500).json({
+      message: "Error while updating visibility",
       details: error.message,
     });
   }
@@ -1531,7 +1667,21 @@ const updateJobPosting = async (request, response) => {
 const deleteJobPost = async (req, res) => {
   const { id } = req.query;
   try {
+    const [jobRows] = await pool.query(`SELECT user_id FROM job_post WHERE id = ?`, [id]);
+    const recruiterUserId = jobRows[0]?.user_id;
+
     const result = await JobsModel.deleteJobPost(id);
+
+    if (recruiterUserId) {
+      await pool.query(
+        `UPDATE subscription_usage su
+         JOIN recruiter_subscriptions rs ON su.subscription_id = rs.id
+         SET su.job_posts_used = GREATEST(0, su.job_posts_used - 1)
+         WHERE rs.recruiter_id = ?`,
+        [recruiterUserId]
+      ).catch(err => console.error("⚠️ Failed to decrement job_posts_used:", err.message));
+    }
+
     res.status(200).send({
       success: true,
       message: "Job post deleted successfully",
@@ -1548,6 +1698,33 @@ const deleteJobPost = async (req, res) => {
 const makeJobActive = async (request, response) => {
   const { id } = request.body;
   try {
+    // 🛡️ Enforce active jobs limit from subscription plan
+    const [jobRows] = await pool.query(`SELECT user_id FROM job_post WHERE id = ?`, [id]);
+    if (jobRows.length > 0) {
+      const recruiterUserId = jobRows[0].user_id;
+      const [subRows] = await pool.query(`
+        SELECT sp.active_job_limit 
+        FROM recruiter_subscriptions rs
+        INNER JOIN subscription_plans sp ON rs.plan_id = sp.id
+        WHERE rs.recruiter_id = ? AND rs.status = 'Active'
+        ORDER BY rs.id DESC LIMIT 1
+      `, [recruiterUserId]);
+
+      if (subRows.length > 0) {
+        const activeLimit = subRows[0].active_job_limit;
+        const [activeCountRows] = await pool.query(
+          `SELECT COUNT(*) AS count FROM job_post WHERE user_id = ? AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
+          [recruiterUserId]
+        );
+        if (activeCountRows[0].count >= activeLimit) {
+          return response.status(403).json({
+            message: "Maximum Active Job Limit Reached",
+            details: `You have reached your maximum active job limit (${activeLimit}). Close an existing job or upgrade your plan.`
+          });
+        }
+      }
+    }
+
     const result = await JobsModel.makeJobActive(id);
     response.status(200).send({
       message: "Job registration has been made active successfully",
@@ -1665,10 +1842,72 @@ const getPendingJobs = async (request, response) => {
   };
 
   try {
-    const posts = await JobsModel.getJobPosts(filters);
+    const postsResult = await JobsModel.getJobPosts(filters);
+    const rawList = postsResult?.data || (Array.isArray(postsResult) ? postsResult : []);
+
+    const enrichedList = await Promise.all(
+      rawList.map(async (job) => {
+        try {
+          if (!job.user_id) return job;
+
+          const [userRows] = await pool.query("SELECT role_id, full_name, email FROM users WHERE id = ?", [job.user_id]);
+          const isSuperAdmin = userRows[0]?.role_id === 1;
+
+          if (isSuperAdmin) {
+            return {
+              ...job,
+              recruiter_name: userRows[0]?.full_name || job.recruiter_name,
+              recruiter_email: userRows[0]?.email,
+              recruiter_plan_name: 'Admin',
+              recruiter_active_limit: 0,
+              recruiter_active_count: 0,
+              recruiter_can_approve: true
+            };
+          }
+
+          const [subRows] = await pool.query(
+            `SELECT sp.name AS plan_name, sp.active_job_limit
+             FROM recruiter_subscriptions rs
+             JOIN subscription_plans sp ON rs.plan_id = sp.id
+             WHERE rs.recruiter_id = ?
+             ORDER BY rs.id DESC LIMIT 1`,
+            [job.user_id]
+          );
+
+          const planName = subRows[0]?.plan_name || 'Basic';
+          const activeLimit = subRows[0]?.active_job_limit !== undefined ? subRows[0].active_job_limit : 3;
+
+          const [activeCountRows] = await pool.query(
+            `SELECT COUNT(*) AS count FROM job_post WHERE user_id = ? AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
+            [job.user_id]
+          );
+
+          const activeCount = activeCountRows[0]?.count || 0;
+          const canApprove = activeLimit === 0 || activeCount < activeLimit;
+
+          return {
+            ...job,
+            recruiter_name: userRows[0]?.full_name || job.recruiter_name,
+            recruiter_email: userRows[0]?.email,
+            recruiter_plan_name: planName,
+            recruiter_active_limit: activeLimit,
+            recruiter_active_count: activeCount,
+            recruiter_can_approve: canApprove
+          };
+        } catch (enrichErr) {
+          console.error("Error enriching job:", enrichErr);
+          return job;
+        }
+      })
+    );
+
+    if (postsResult && postsResult.data) {
+      postsResult.data = enrichedList;
+    }
+
     response.status(200).send({
       message: "Pending job posts fetched successfully",
-      data: posts,
+      data: postsResult && postsResult.data ? postsResult : enrichedList,
     });
   } catch (error) {
     response.status(500).send({
@@ -1681,6 +1920,52 @@ const getPendingJobs = async (request, response) => {
 const approveJob = async (request, response) => {
   const { id } = request.params;
   try {
+    // 1. Get job and recruiter info
+    const [jobRows] = await pool.query(
+      "SELECT id, user_id, job_title, company_name, approval_status FROM job_post WHERE id = ?",
+      [id]
+    );
+    if (!jobRows || jobRows.length === 0) {
+      return response.status(404).send({ message: "Job post not found" });
+    }
+    const job = jobRows[0];
+    const recruiterUserId = job.user_id;
+
+    // 2. Enforce active job limit for recruiter
+    if (recruiterUserId) {
+      const [userRows] = await pool.query("SELECT role_id FROM users WHERE id = ?", [recruiterUserId]);
+      const isSuperAdmin = userRows[0]?.role_id === 1;
+
+      if (!isSuperAdmin) {
+        const [subRows] = await pool.query(
+          `SELECT sp.name AS plan_name, sp.active_job_limit
+           FROM recruiter_subscriptions rs
+           JOIN subscription_plans sp ON rs.plan_id = sp.id
+           WHERE rs.recruiter_id = ?
+           ORDER BY rs.id DESC LIMIT 1`,
+          [recruiterUserId]
+        );
+
+        const planName = subRows[0]?.plan_name || 'Basic';
+        const activeLimit = subRows[0]?.active_job_limit !== undefined ? subRows[0].active_job_limit : 3;
+
+        if (activeLimit > 0) {
+          const [activeCountRows] = await pool.query(
+            `SELECT COUNT(*) AS count FROM job_post WHERE user_id = ? AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
+            [recruiterUserId]
+          );
+          const activeJobsCount = activeCountRows[0]?.count || 0;
+
+          if (activeJobsCount >= activeLimit) {
+            return response.status(400).send({
+              message: "Active Job Limit Reached",
+              details: `Cannot approve job: Recruiter "${job.company_name || 'Recruiter'}" has reached their ${planName} Plan active limit (${activeJobsCount}/${activeLimit} active slots used). The recruiter must upgrade their plan or close an existing active job before this job can be approved.`
+            });
+          }
+        }
+      }
+    }
+
     const result = await JobsModel.updateApprovalStatus(id, 'approved');
     
     // Fetch the job details to send notification
@@ -1766,10 +2051,77 @@ const rejectJob = async (request, response) => {
 
 const approveAllJobs = async (request, response) => {
   try {
-    const result = await JobsModel.approveAllJobPosts();
+    const [pendingJobs] = await pool.query(
+      `SELECT id, user_id, job_title, company_name FROM job_post WHERE approval_status = 'pending' AND (is_closed = 0 OR is_closed IS NULL)`
+    );
+
+    if (!pendingJobs || pendingJobs.length === 0) {
+      return response.status(200).send({
+        message: "No pending jobs to approve",
+        approvedCount: 0,
+        skippedCount: 0
+      });
+    }
+
+    let approvedCount = 0;
+    let skippedCount = 0;
+    const skippedJobs = [];
+    const recruiterActiveCounts = {};
+
+    for (const job of pendingJobs) {
+      const recruiterUserId = job.user_id;
+
+      if (recruiterUserId) {
+        const [userRows] = await pool.query("SELECT role_id FROM users WHERE id = ?", [recruiterUserId]);
+        const isSuperAdmin = userRows[0]?.role_id === 1;
+
+        if (!isSuperAdmin) {
+          const [subRows] = await pool.query(
+            `SELECT sp.name AS plan_name, sp.active_job_limit
+             FROM recruiter_subscriptions rs
+             JOIN subscription_plans sp ON rs.plan_id = sp.id
+             WHERE rs.recruiter_id = ?
+             ORDER BY rs.id DESC LIMIT 1`,
+            [recruiterUserId]
+          );
+
+          const planName = subRows[0]?.plan_name || 'Basic';
+          const activeLimit = subRows[0]?.active_job_limit !== undefined ? subRows[0].active_job_limit : 3;
+
+          if (activeLimit > 0) {
+            if (recruiterActiveCounts[recruiterUserId] === undefined) {
+              const [activeCountRows] = await pool.query(
+                `SELECT COUNT(*) AS count FROM job_post WHERE user_id = ? AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
+                [recruiterUserId]
+              );
+              recruiterActiveCounts[recruiterUserId] = activeCountRows[0]?.count || 0;
+            }
+
+            if (recruiterActiveCounts[recruiterUserId] >= activeLimit) {
+              skippedCount++;
+              skippedJobs.push({
+                id: job.id,
+                title: job.job_title,
+                company: job.company_name,
+                reason: `Limit reached (${recruiterActiveCounts[recruiterUserId]}/${activeLimit})`
+              });
+              continue;
+            }
+
+            recruiterActiveCounts[recruiterUserId]++;
+          }
+        }
+      }
+
+      await JobsModel.updateApprovalStatus(job.id, 'approved');
+      approvedCount++;
+    }
+
     response.status(200).send({
-      message: "All pending jobs approved successfully",
-      data: result,
+      message: `Approved ${approvedCount} job(s).${skippedCount > 0 ? ` Skipped ${skippedCount} job(s) because recruiter reached their plan active limit.` : ''}`,
+      approvedCount,
+      skippedCount,
+      skippedJobs
     });
   } catch (error) {
     response.status(500).send({
@@ -1808,6 +2160,7 @@ module.exports = {
   updateProject,
   updateResume,
   updateSkills,
+  updateVisibility,
   updateAbout,
   getJobPostByUserId,
   getClasses,

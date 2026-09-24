@@ -1,12 +1,14 @@
 const userModel = require("../models/UserModel");
 const admin = require("../config/firebase");
-const { sendApplicationStatusEmail } = require("../models/EmailModel");
+const { sendApplicationStatusEmail, sendCandidateWelcomeEmail } = require("../models/EmailModel");
 const pool = require("../config/dbConfig");
 
 const getUsers = async (request, response) => {
   try {
-    const { page, limit, search, status, role } = request.query;
-    const usersData = await userModel.getUsers(page, limit, search, status, role);
+    const { page, limit, search, status, role, start_date, end_date, startDate, endDate, timeFilter } = request.query;
+    const finalStartDate = start_date || startDate || null;
+    const finalEndDate = end_date || endDate || null;
+    const usersData = await userModel.getUsers(page, limit, search, status, role, finalStartDate, finalEndDate, timeFilter);
     
     response.status(200).json({
       message: "Users data fetched successfully",
@@ -100,6 +102,18 @@ const createUser = async (request, response) => {
       organization_type_id,
       role_id
     );
+
+    // If candidate registered (role_id 2 or not 3), trigger welcome email notification with professional UI
+    if (role_id == 2 || role_id != 3) {
+      sendCandidateWelcomeEmail({
+        email,
+        first_name,
+        last_name,
+      }).catch((emailErr) => {
+        console.error("Async candidate welcome email error:", emailErr);
+      });
+    }
+
     response.status(201).json({
       message: "User created successfully",
       data: result,
@@ -185,6 +199,11 @@ const insertProfile = async (request, response) => {
     end_year,
     gender,
     resume,
+    languages,
+    visa_status,
+    preferred_job_type,
+    dob,
+    company_headcount,
   } = request.body;
 
   console.log("Received profile data:", request.body);
@@ -232,7 +251,12 @@ const insertProfile = async (request, response) => {
       start_year,
       end_year,
       gender,
-      resume
+      resume,
+      languages,
+      visa_status,
+      preferred_job_type,
+      dob,
+      company_headcount
     );
 
     response.status(201).json({
@@ -499,37 +523,8 @@ const getUserType = async (request, response) => {
 };
 
 const updateBasicDetails = async (request, response) => {
-  const {
-    first_name,
-    last_name,
-    gender,
-    user_type,
-    classes,
-    course,
-    start_year,
-    end_year,
-    experince_type,
-    total_years,
-    total_months,
-    location,
-    user_id,
-  } = request.body;
   try {
-    const result = await userModel.updateBasicDetails(
-      first_name,
-      last_name,
-      gender,
-      user_type,
-      classes,
-      course,
-      start_year,
-      end_year,
-      experince_type,
-      total_years,
-      total_months,
-      location,
-      user_id
-    );
+    const result = await userModel.updateBasicDetails(request.body);
     response.status(200).send({
       message: "Updated successfully",
       data: result,
@@ -543,21 +538,20 @@ const updateBasicDetails = async (request, response) => {
 };
 
 const updateEducation = async (request, response) => {
-  const {
-    qualification,
-    course,
-    specialization,
-    college,
-    start_date,
-    end_date,
-    course_type,
-    percentage,
-    cgpa,
-    roll_number,
-    lateral_entry,
-    user_id,
-    id,
-  } = request.body;
+  const user_id = request.body.user_id;
+  const id = request.body.id;
+  const qualification = request.body.qualification || request.body.education_level;
+  const course = request.body.course || request.body.degree_name || request.body.degree;
+  const specialization = request.body.specialization || "";
+  const college = request.body.college || request.body.institute_name || request.body.institution;
+  const start_date = request.body.start_date || request.body.start_year;
+  const end_date = request.body.end_date || request.body.end_year;
+  const course_type = request.body.course_type || "Full Time";
+  const percentage = request.body.percentage !== undefined ? request.body.percentage : request.body.percentage_cgpa;
+  const cgpa = request.body.cgpa;
+  const roll_number = request.body.roll_number;
+  const lateral_entry = request.body.lateral_entry ? 1 : 0;
+
   try {
     const result = await userModel.updateEducation(
       qualification,
@@ -603,20 +597,19 @@ const deleteEducation = async (request, response) => {
 };
 
 const insertEducation = async (request, response) => {
-  const {
-    user_id,
-    qualification,
-    course,
-    specialization,
-    college,
-    start_date,
-    end_date,
-    course_type,
-    percentage,
-    cgpa,
-    roll_number,
-    lateral_entry,
-  } = request.body;
+  const user_id = request.body.user_id;
+  const qualification = request.body.qualification || request.body.education_level;
+  const course = request.body.course || request.body.degree_name || request.body.degree;
+  const specialization = request.body.specialization || "";
+  const college = request.body.college || request.body.institute_name || request.body.institution;
+  const start_date = request.body.start_date || request.body.start_year;
+  const end_date = request.body.end_date || request.body.end_year;
+  const course_type = request.body.course_type || "Full Time";
+  const percentage = request.body.percentage !== undefined ? request.body.percentage : request.body.percentage_cgpa;
+  const cgpa = request.body.cgpa;
+  const roll_number = request.body.roll_number;
+  const lateral_entry = request.body.lateral_entry ? 1 : 0;
+
   try {
     const result = await userModel.insertEducation(
       user_id,
@@ -677,14 +670,25 @@ const isProfileUpdated = async (request, response) => {
 };
 
 const updateProfileImage = async (request, response) => {
-  const { user_id, profile_image } = request.body;
+  let user_id = request.body?.user_id;
+  let profile_image = request.body?.profile_image;
+
+  if (request.file) {
+    profile_image = `data:${request.file.mimetype};base64,${request.file.buffer.toString("base64")}`;
+  }
+
+  if (!user_id || !profile_image) {
+    return response.status(400).json({ message: "Bad Request: Missing user_id or profile_image" });
+  }
+
   try {
     const result = await userModel.updateProfileImage(user_id, profile_image);
     response.status(200).send({
       message: "Profile image updated successfully",
-      data: result,
+      result: result,
     });
   } catch (error) {
+    console.error("Error updating profile image in DB:", error);
     response.status(500).send({
       message: "Error while updating profile image",
       details: error.message,

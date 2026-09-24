@@ -78,8 +78,16 @@ app.use((req, res) => {
 
 
 // =======================
-// 🚀 Start Server
+// 🚀 Start Server & Error Shields
 // =======================
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("⚠️ Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("⚠️ Uncaught Exception:", error);
+});
+
 const PORT = 3006;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`⚡ Server running at http://0.0.0.0:${PORT}`);

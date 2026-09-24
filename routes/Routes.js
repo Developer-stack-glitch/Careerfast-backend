@@ -1,10 +1,13 @@
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
+const upload = multer({ storage: multer.memoryStorage() });
 const userController = require("../controllers/UserController");
 const LoginController = require("../controllers/LoginController");
 const RoleController = require("../controllers/RoleController");
 const OrganizationController = require("../controllers/OrganizationController");
-const { verifyToken } = require("../Validation/Validation");
+const IndustryController = require("../controllers/IndustryController");
+const { verifyToken, verifySuperAdmin } = require("../Validation/Validation");
 const JobsController = require("../controllers/JobsController");
 const EmailController = require("../controllers/EmailController");
 const NotificationController = require("../controllers/NotificationController");
@@ -12,6 +15,10 @@ const BillingPlanController = require("../controllers/BillingPlanController");
 const SettingsController = require("../controllers/SettingsController");
 const { applyJob } = require("../controllers/ApplyController");
 const CandidateSearchController = require("../controllers/CandidateSearchController");
+const SubscriptionPlanController = require("../controllers/SubscriptionPlanController");
+const RecruiterManagementController = require("../controllers/RecruiterManagementController");
+const RecruiterSubscriptionController = require("../controllers/RecruiterSubscriptionController");
+const SubRecruiterController = require("../controllers/SubRecruiterController");
 const authRoutes = require("./auth");
 const tokenRoutes = require("./tokenRoutes");
 const eventRoutes = require("./eventRoutes");
@@ -30,6 +37,52 @@ router.use("/events", eventRoutes);
 // Login module APIs
 router.post("/login", LoginController.login);
 
+// ==========================================
+// 👑 Super Admin Subscription Plan Routes
+// ==========================================
+router.get("/admin/plans", verifyToken, SubscriptionPlanController.getAllPlans);
+router.get("/admin/plans/:id", verifyToken, SubscriptionPlanController.getPlanById);
+router.post("/admin/plans", verifyToken, verifySuperAdmin, SubscriptionPlanController.createPlan);
+router.put("/admin/plans/:id", verifyToken, verifySuperAdmin, SubscriptionPlanController.updatePlan);
+router.post("/admin/plans/:id/duplicate", verifyToken, verifySuperAdmin, SubscriptionPlanController.duplicatePlan);
+router.put("/admin/plans/:id/status", verifyToken, verifySuperAdmin, SubscriptionPlanController.togglePlanStatus);
+router.delete("/admin/plans/:id", verifyToken, verifySuperAdmin, SubscriptionPlanController.deletePlan);
+router.get("/admin/plans/:id/subscribers", verifyToken, verifySuperAdmin, SubscriptionPlanController.getPlanSubscribers);
+
+// ==========================================
+// 🏢 Super Admin Recruiter Management Routes
+// ==========================================
+router.get("/admin/recruiters", verifyToken, verifySuperAdmin, RecruiterManagementController.getAllRecruiters);
+router.get("/admin/recruiters/:id", verifyToken, verifySuperAdmin, RecruiterManagementController.getRecruiterDetails);
+router.post("/admin/recruiters", verifyToken, verifySuperAdmin, RecruiterManagementController.createRecruiter);
+router.post("/admin/recruiters/:id/change-plan", verifyToken, verifySuperAdmin, RecruiterManagementController.changeRecruiterPlan);
+router.post("/admin/recruiters/:id/extend-subscription", verifyToken, verifySuperAdmin, RecruiterManagementController.extendSubscription);
+router.put("/admin/recruiters/:id/status", verifyToken, verifySuperAdmin, RecruiterManagementController.updateRecruiterStatus);
+router.post("/admin/recruiters/:id/reset-password", verifyToken, verifySuperAdmin, RecruiterManagementController.resetPassword);
+router.get("/admin/subscriptions", verifyToken, verifySuperAdmin, RecruiterManagementController.getAllSubscriptions);
+router.get("/admin/audit-logs", verifyToken, verifySuperAdmin, RecruiterManagementController.getAuditLogs);
+
+// ==========================================
+// 👥 Recruiter Team & Sub-Recruiter Routes
+// ==========================================
+router.get("/recruiter/team", verifyToken, SubRecruiterController.getTeam);
+router.post("/recruiter/team", verifyToken, SubRecruiterController.createSubRecruiter);
+router.put("/recruiter/team/:id/permissions", verifyToken, SubRecruiterController.updatePermissions);
+router.patch("/recruiter/team/:id/status", verifyToken, SubRecruiterController.toggleStatus);
+router.delete("/recruiter/team/:id", verifyToken, SubRecruiterController.deleteSubRecruiter);
+
+// Super Admin Team Oversight
+router.get("/admin/recruiters/:id/team", verifyToken, verifySuperAdmin, SubRecruiterController.getAdminRecruiterTeam);
+router.post("/admin/recruiters/:id/team", verifyToken, verifySuperAdmin, SubRecruiterController.createAdminSubRecruiter);
+
+// ==========================================
+// 💼 Recruiter Dynamic Access Endpoint
+// ==========================================
+router.get("/recruiter/my-subscription", verifyToken, RecruiterSubscriptionController.getMySubscription);
+router.post("/recruiter/subscription/consume-view", verifyToken, RecruiterSubscriptionController.consumeResumeView);
+router.post("/recruiter/subscription/consume-download", verifyToken, RecruiterSubscriptionController.consumeResumeDownload);
+router.post("/recruiter/candidates/send-email", verifyToken, RecruiterSubscriptionController.sendCandidateEmail);
+
 // User module APIs
 router.get("/getUsers", userController.getUsers);
 router.post("/createUser", userController.createUser);
@@ -45,6 +98,10 @@ router.get(
   "/organization/type/get",
   OrganizationController.getOrganizationTypes
 );
+
+// Industry module APIs
+router.get("/industry/type/get", IndustryController.getIndustryTypes);
+router.get("/industry-types", IndustryController.getIndustryTypes);
 
 // Billing Plan APIs
 router.get("/getBillingPlans", verifyToken, BillingPlanController.getBillingPlans);
@@ -155,8 +212,9 @@ router.put("/updateProject", verifyToken, JobsController.updateProject);
 router.post("/VerifyEmail", EmailController.VerifyEmail);
 router.post("/competitionRegistration", EmailController.sendCompetitionRegistration);
 router.post("/mentorQuery", EmailController.sendMentorQuery);
-router.put("/updateResume", verifyToken, JobsController.updateResume);
+router.put("/updateResume", verifyToken, upload.single("resume"), JobsController.updateResume);
 router.put("/updateSkills", verifyToken, JobsController.updateSkills);
+router.put("/updateVisibility", verifyToken, JobsController.updateVisibility);
 router.put("/updateAbout", verifyToken, JobsController.updateAbout);
 router.get("/getUserType", userController.getUserType);
 
@@ -203,6 +261,7 @@ router.delete("/job/removeSavedCandidateHR", verifyToken, JobsController.removeS
 router.put(
   "/updateProfileImage",
   verifyToken,
+  upload.single('profile_image'),
   userController.updateProfileImage
 );
 
@@ -270,6 +329,7 @@ router.use("/courses", courseRoutes);
 router.get("/candidates/search", CandidateSearchController.searchCandidates);
 router.get("/candidates/filter-options", CandidateSearchController.getFilterOptions);
 router.get("/candidates/companies-lookup", CandidateSearchController.lookupCompanies);
+// Candidate Folders
 router.get("/candidates/folders", verifyToken, CandidateSearchController.getFolders);
 router.post("/candidates/folders", verifyToken, CandidateSearchController.createFolder);
 router.post("/candidates/folders/add-candidates", verifyToken, CandidateSearchController.addCandidatesToFolder);
@@ -279,5 +339,15 @@ router.get("/candidates/folders/:id/candidates", verifyToken, CandidateSearchCon
 router.put("/candidates/folders/:id/candidates/stage", verifyToken, CandidateSearchController.updateCandidateStageInFolder);
 router.delete("/candidates/folders/:id/candidates/:candidateId", verifyToken, CandidateSearchController.removeCandidateFromFolder);
 
+// HR Dashboard APIs
+const HrDashboardController = require("../controllers/HrDashboardController");
+router.get("/hr/dashboard/summary", HrDashboardController.getDashboardSummary);
+router.post("/hr/dashboard/searches", HrDashboardController.saveSearch);
+router.delete("/hr/dashboard/searches/clear", HrDashboardController.clearSearches);
+router.delete("/hr/dashboard/searches/:id", HrDashboardController.deleteSearch);
+router.get("/hr/dashboard/campaigns", HrDashboardController.getCampaigns);
+router.get("/hr/dashboard/credits", HrDashboardController.getCredits);
+
 module.exports = router;
+
 

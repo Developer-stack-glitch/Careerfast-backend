@@ -18,6 +18,8 @@ const CandidateSearchModel = {
         keywordMatch = "any",
         skills = [],
         location = [],
+        preferredLocations = [],
+        includeRelocating = false,
         experienceMin,
         experienceMax,
         jobTitle = [],
@@ -33,8 +35,14 @@ const CandidateSearchModel = {
         hasResume = false,
         verifiedEmail = false,
         status = "",
+        language = [],
+        visaStatus = [],
+        jobType = [],
+        companyHeadcount = [],
+        ageMin,
+        ageMax,
         page = 1,
-        limit = 10,
+        limit = 40,
         sortBy = "Relevance",
       } = params;
 
@@ -63,12 +71,18 @@ const CandidateSearchModel = {
       const whereClauses = ["u.role_id = 2"];
       const queryParams = [];
 
-      // Active status check (treat 1 as active, default to active unless specified)
-      if (status === 'Active') {
+      // Candidate status filter
+      const normalizedStatus = (status || '').toLowerCase().trim();
+      if (normalizedStatus === 'active' || normalizedStatus === 'active only') {
         whereClauses.push("u.is_active = 1");
-      } else if (status === 'Inactive') {
+      } else if (normalizedStatus === 'inactive' || normalizedStatus === 'inactive only') {
         whereClauses.push("(u.is_active = 0 OR u.is_active IS NULL)");
+      } else if (normalizedStatus === 'recently updated') {
+        whereClauses.push("(u.updated_date IS NOT NULL OR u.last_active IS NOT NULL)");
+      } else if (normalizedStatus === 'all candidates' || normalizedStatus === 'all') {
+        // Show all candidates, no is_active restriction
       } else {
+        // Default (Active / Updated)
         whereClauses.push("(u.is_active = 1 OR u.is_active IS NULL)");
       }
 
@@ -78,6 +92,7 @@ const CandidateSearchModel = {
         const termClauses = searchTerms.map(() => `(
           u.first_name LIKE ? OR 
           u.last_name LIKE ? OR 
+          CONCAT(u.first_name, ' ', u.last_name) LIKE ? OR
           u.email LIKE ? OR 
           u.phone LIKE ? OR 
           u.location LIKE ? OR 
@@ -95,7 +110,7 @@ const CandidateSearchModel = {
         whereClauses.push(`(${termClauses.join(operator)})`);
         searchTerms.forEach(term => {
           const searchPattern = `%${term}%`;
-          for (let i = 0; i < 14; i++) {
+          for (let i = 0; i < 15; i++) {
             queryParams.push(searchPattern);
           }
         });
@@ -130,11 +145,16 @@ const CandidateSearchModel = {
         });
       }
 
-      // Location Filter
-      if (location && location.length > 0) {
-        const locationConditions = location.map(() => `u.location LIKE ?`).join(' OR ');
+      // Location Filter (Primary location + Preferred locations)
+      const allLocations = [
+        ...(Array.isArray(location) ? location : (location ? [location] : [])),
+        ...(Array.isArray(preferredLocations) ? preferredLocations : (preferredLocations ? [preferredLocations] : []))
+      ].filter(Boolean);
+
+      if (allLocations.length > 0) {
+        const locationConditions = allLocations.map(() => `u.location LIKE ?`).join(' OR ');
         whereClauses.push(`(${locationConditions})`);
-        location.forEach(loc => queryParams.push(`%${loc.trim()}%`));
+        allLocations.forEach(loc => queryParams.push(`%${loc.trim()}%`));
       }
 
       // Job Title Filter
@@ -227,10 +247,20 @@ const CandidateSearchModel = {
 
       // Active / Updated within days
       if (activeUpdated) {
-        const days = parseInt(activeUpdated, 10);
+        let days = parseInt(activeUpdated, 10);
+        if (isNaN(days)) {
+          const str = String(activeUpdated).toLowerCase();
+          if (str.includes('7')) days = 7;
+          else if (str.includes('15')) days = 15;
+          else if (str.includes('1 month') || str.includes('30')) days = 30;
+          else if (str.includes('3 month') || str.includes('90')) days = 90;
+          else if (str.includes('6 month') || str.includes('180')) days = 180;
+          else if (str.includes('12 month') || str.includes('1 year') || str.includes('365')) days = 365;
+        }
+
         if (!isNaN(days) && days > 0) {
-          whereClauses.push(`(u.created_date >= DATE_SUB(NOW(), INTERVAL ? DAY) OR (u.updated_date IS NOT NULL AND u.updated_date >= DATE_SUB(NOW(), INTERVAL ? DAY)))`);
-          queryParams.push(days, days);
+          whereClauses.push(`(COALESCE(u.last_active, u.updated_date, u.created_date) >= DATE_SUB(NOW(), INTERVAL ? DAY))`);
+          queryParams.push(days);
         }
       }
 
@@ -242,6 +272,46 @@ const CandidateSearchModel = {
       // Verified Email
       if (verifiedEmail) {
         whereClauses.push(`u.is_email_verified = 1`);
+      }
+
+      // Age
+      if (ageMin || ageMax) {
+        if (!isNaN(ageMin) && ageMin > 0) {
+          whereClauses.push(`TIMESTAMPDIFF(YEAR, u.dob, CURDATE()) >= ?`);
+          queryParams.push(parseInt(ageMin, 10));
+        }
+        if (!isNaN(ageMax) && ageMax > 0) {
+          whereClauses.push(`TIMESTAMPDIFF(YEAR, u.dob, CURDATE()) <= ?`);
+          queryParams.push(parseInt(ageMax, 10));
+        }
+      }
+
+      // Languages
+      if (Array.isArray(language) && language.length > 0) {
+        const langClauses = language.map(() => `JSON_CONTAINS(u.languages, JSON_QUOTE(?))`);
+        whereClauses.push(`(${langClauses.join(' OR ')})`);
+        queryParams.push(...language);
+      }
+
+      // Visa Status
+      if (Array.isArray(visaStatus) && visaStatus.length > 0) {
+        const visaClauses = visaStatus.map(() => `u.visa_status = ?`);
+        whereClauses.push(`(${visaClauses.join(' OR ')})`);
+        queryParams.push(...visaStatus);
+      }
+
+      // Job Type
+      if (Array.isArray(jobType) && jobType.length > 0) {
+        const jobTypeClauses = jobType.map(() => `JSON_CONTAINS(u.preferred_job_type, JSON_QUOTE(?))`);
+        whereClauses.push(`(${jobTypeClauses.join(' OR ')})`);
+        queryParams.push(...jobType);
+      }
+
+      // Company Headcount
+      if (Array.isArray(companyHeadcount) && companyHeadcount.length > 0) {
+        const headcountClauses = companyHeadcount.map(() => `u.company_headcount = ?`);
+        whereClauses.push(`(${headcountClauses.join(' OR ')})`);
+        queryParams.push(...companyHeadcount);
       }
 
       // Build FROM clause (joins only if needed)
@@ -263,24 +333,30 @@ const CandidateSearchModel = {
 
       // 2. Sorting
       const dataQueryParams = [...queryParams];
-      let orderByClause = " ORDER BY u.created_date DESC";
+      let orderByClause = " ORDER BY COALESCE(u.last_active, u.updated_date, u.created_date) DESC, u.id DESC";
       if (sortBy === "Oldest" || sortBy === "Oldest First") {
-        orderByClause = " ORDER BY u.created_date ASC";
+        orderByClause = " ORDER BY u.created_date ASC, u.id ASC";
       } else if (sortBy === "Name A-Z") {
-        orderByClause = " ORDER BY u.first_name ASC, u.last_name ASC";
+        orderByClause = " ORDER BY u.first_name ASC, u.last_name ASC, u.id ASC";
+      } else if (sortBy === "Name Z-A") {
+        orderByClause = " ORDER BY u.first_name DESC, u.last_name DESC, u.id DESC";
       } else if (sortBy === "Experience (High to Low)" || sortBy === "Experience") {
-        orderByClause = " ORDER BY CAST(u.total_years AS UNSIGNED) DESC, u.created_date DESC";
+        orderByClause = " ORDER BY CAST(u.total_years AS UNSIGNED) DESC, u.id DESC";
       } else if (sortBy === "Experience (Low to High)") {
-        orderByClause = " ORDER BY CAST(u.total_years AS UNSIGNED) ASC, u.created_date DESC";
+        orderByClause = " ORDER BY (CASE WHEN u.total_years IS NULL OR u.total_years = '' OR u.experince_type = 'Fresher' THEN 0 ELSE CAST(u.total_years AS UNSIGNED) END) ASC, u.id ASC";
       } else if (sortBy === "Newest" || sortBy === "Newest First") {
-        orderByClause = " ORDER BY u.created_date DESC";
-      } else if (sortBy === "Relevance" && searchTerms.length > 1) {
-        const boostClauses = searchTerms.map(() => `(CASE WHEN u.skills LIKE ? OR up.job_title LIKE ? OR u.about LIKE ? THEN 1 ELSE 0 END)`);
-        orderByClause = ` ORDER BY (${boostClauses.join(' + ')}) DESC, u.created_date DESC`;
-        searchTerms.forEach(term => {
-          const p = `%${term}%`;
-          dataQueryParams.push(p, p, p);
-        });
+        orderByClause = " ORDER BY u.created_date DESC, u.id DESC";
+      } else if (sortBy === "Relevance") {
+        if (searchTerms.length > 0) {
+          const boostClauses = searchTerms.map(() => `(CASE WHEN u.skills LIKE ? OR up.job_title LIKE ? OR u.about LIKE ? THEN 1 ELSE 0 END)`);
+          orderByClause = ` ORDER BY (${boostClauses.join(' + ')}) DESC, COALESCE(u.last_active, u.updated_date, u.created_date) DESC, u.id DESC`;
+          searchTerms.forEach(term => {
+            const p = `%${term}%`;
+            dataQueryParams.push(p, p, p);
+          });
+        } else {
+          orderByClause = " ORDER BY COALESCE(u.last_active, u.updated_date, u.created_date) DESC, u.id DESC";
+        }
       }
 
       // Pagination
@@ -295,7 +371,8 @@ const CandidateSearchModel = {
         u.about, u.skills, u.organization, u.user_type, u.class, u.course,
         u.start_year, u.end_year, u.experince_type, u.total_years, u.total_months,
         u.location, u.organization_type_id, u.is_active, u.created_date,
-        u.updated_date, u.banner_color, u.banner_image, u.last_active
+        u.updated_date, u.banner_color, u.banner_image, u.last_active,
+        u.preferred_job_type
       `;
 
       const dataQuery = `
@@ -309,10 +386,11 @@ const CandidateSearchModel = {
       // Fetch candidate records
       const [candidates] = await pool.query(dataQuery, dataQueryParams);
 
-      // 3. Batched fetch of user_professional and user_education (Fixes N+1 database queries)
+      // 3. Batched fetch of user_professional, user_education, and folder items
       const candidateIds = candidates.map(c => c.id);
-      const profMap = {};
+      const profListMap = {};
       const eduMap = {};
+      const folderMap = {};
 
       if (candidateIds.length > 0) {
         const [allProf] = await pool.query(
@@ -323,9 +401,10 @@ const CandidateSearchModel = {
           [candidateIds]
         );
         allProf.forEach(row => {
-          if (!profMap[row.user_id]) {
-            profMap[row.user_id] = row;
+          if (!profListMap[row.user_id]) {
+            profListMap[row.user_id] = [];
           }
+          profListMap[row.user_id].push(row);
         });
 
         const [allEdu] = await pool.query(
@@ -340,6 +419,31 @@ const CandidateSearchModel = {
             eduMap[row.user_id] = row;
           }
         });
+
+        try {
+          const [allFolderItems] = await pool.query(
+            `SELECT cfi.candidate_id, cfi.folder_id, cfi.stage, cfi.created_at as saved_at,
+                    cf.name as folder_name, u.first_name as recruiter_first_name, u.last_name as recruiter_last_name
+             FROM candidate_folder_items cfi
+             JOIN candidate_folders cf ON cf.id = cfi.folder_id
+             LEFT JOIN users u ON u.id = cf.recruiter_id
+             WHERE cfi.candidate_id IN (?)
+             ORDER BY cfi.id DESC`,
+            [candidateIds]
+          );
+          allFolderItems.forEach(item => {
+            if (!folderMap[item.candidate_id]) folderMap[item.candidate_id] = [];
+            folderMap[item.candidate_id].push({
+              folder_id: item.folder_id,
+              folder_name: item.folder_name,
+              stage: item.stage || 'prospect',
+              saved_at: item.saved_at,
+              saved_by: (item.recruiter_first_name ? `${item.recruiter_first_name} ${item.recruiter_last_name || ''}` : '').trim() || 'Recruiter'
+            });
+          });
+        } catch (fErr) {
+          console.error("Error fetching candidate folders:", fErr);
+        }
       }
 
       // Format candidates in-memory without extra DB queries
@@ -351,8 +455,75 @@ const CandidateSearchModel = {
           parsedSkills = user.skills ? user.skills.split(",").map(s => s.replace(/['"]+/g, "").trim()) : [];
         }
 
-        const prof = profMap[user.id] || null;
+        const userProfs = profListMap[user.id] || [];
+        const currentProf = userProfs.find(p => p.currently_working == 1) || userProfs[0] || null;
+        const pastProfs = userProfs.filter(p => p !== currentProf);
+        const pastProf = pastProfs.find(p => p.currently_working == 0) || pastProfs[0] || null;
         const edu = eduMap[user.id] || null;
+
+        // Parse preferred job preferences (locations, notice period, expected salary, etc.)
+        let prefData = {};
+        if (user.preferred_job_type) {
+          try {
+            prefData = typeof user.preferred_job_type === 'string'
+              ? JSON.parse(user.preferred_job_type)
+              : (user.preferred_job_type || {});
+          } catch (e) {
+            prefData = {};
+          }
+        }
+
+        const prefLocations = Array.isArray(prefData.preferredLocations)
+          ? prefData.preferredLocations
+          : (Array.isArray(prefData.preferred_locations)
+              ? prefData.preferred_locations
+              : (typeof prefData.preferredLocations === 'string' ? prefData.preferredLocations.split(',').map(s => s.trim()).filter(Boolean) : []));
+
+        const noticePeriodVal = prefData.noticePeriod || prefData.notice_period || null;
+        const expectedSalaryVal = prefData.expectedSalary || prefData.expected_salary || null;
+
+        // Friendly education display
+        let educationDisplay = null;
+        if (edu) {
+          const parts = [];
+          const degreePart = edu.course || edu.qualification;
+          if (degreePart) {
+            parts.push(edu.specialization ? `${degreePart} (${edu.specialization})` : degreePart);
+          }
+          if (edu.college) parts.push(edu.college);
+          educationDisplay = parts.join(' • ');
+        } else if (user.course) {
+          educationDisplay = user.course + (user.class ? ` (${user.class})` : '');
+        }
+
+        // Friendly past experience display
+        // Priority:
+        // 1. Separate past work experience (pastProf)
+        // 2. If candidate only entered 1 company in their profile, fallback to that company (currentProf)
+        // 3. Fallback to user.organization
+        const effectivePast = pastProf || currentProf;
+        let pastExperienceDisplay = null;
+        let pastCompany = null;
+        let pastJobTitle = null;
+
+        if (effectivePast) {
+          const comp = (effectivePast.company_name && String(effectivePast.company_name).trim().toLowerCase() !== 'null') ? String(effectivePast.company_name).trim() : null;
+          const title = (effectivePast.job_title && String(effectivePast.job_title).trim().toLowerCase() !== 'null')
+            ? String(effectivePast.job_title).trim()
+            : ((effectivePast.designation && String(effectivePast.designation).trim().toLowerCase() !== 'null') ? String(effectivePast.designation).trim() : null);
+
+          pastCompany = comp;
+          pastJobTitle = title;
+
+          if (title && comp) {
+            pastExperienceDisplay = `${title} at ${comp}`;
+          } else {
+            pastExperienceDisplay = comp || title || null;
+          }
+        } else if (user.organization && String(user.organization).trim().toLowerCase() !== 'null') {
+          pastCompany = String(user.organization).trim();
+          pastExperienceDisplay = pastCompany;
+        }
 
         // Calculate friendly experience string
         let experienceDisplay = "Fresher";
@@ -365,14 +536,35 @@ const CandidateSearchModel = {
           experienceDisplay = user.experince_type;
         }
 
+        const candFolders = folderMap[user.id] || [];
+        let primaryStage = 'prospect';
+        if (candFolders.length > 0) {
+          const stages = candFolders.map(f => (f.stage || '').toLowerCase());
+          if (stages.includes('hired') || stages.includes('selected')) primaryStage = 'hired';
+          else if (stages.includes('interviewed') || stages.includes('interview')) primaryStage = 'interviewed';
+          else if (stages.includes('shortlisted')) primaryStage = 'shortlisted';
+          else if (stages.includes('rejected')) primaryStage = 'rejected';
+          else primaryStage = candFolders[0].stage || 'prospect';
+        }
+
         return {
           ...user,
           skills: Array.isArray(parsedSkills) ? parsedSkills : [],
-          current_job_title: prof ? (prof.job_title || prof.designation) : null,
-          current_company: prof ? prof.company_name : null,
-          designation: prof ? prof.designation : null,
+          current_job_title: currentProf ? (currentProf.job_title || currentProf.designation) : null,
+          current_company: currentProf ? currentProf.company_name : null,
+          designation: currentProf ? currentProf.designation : null,
+          past_job_title: pastJobTitle,
+          past_company: pastCompany,
+          past_experience_display: pastExperienceDisplay,
           education: edu ? edu : (user.course ? { course: user.course } : null),
+          education_display: educationDisplay,
+          preferred_locations: prefLocations,
+          notice_period: noticePeriodVal,
+          expected_salary: expectedSalaryVal,
           experience_display: experienceDisplay,
+          saved_in_folders: candFolders,
+          primary_stage: primaryStage,
+          is_saved: candFolders.length > 0,
           password: null,
           fcm_token: null
         };
@@ -1099,6 +1291,7 @@ const CandidateSearchModel = {
           u.total_months,
           u.experince_type,
           u.course,
+          u.preferred_job_type,
           u.created_date,
           u.updated_date,
           fi.stage,
@@ -1180,11 +1373,28 @@ const CandidateSearchModel = {
         folder,
         candidates: candidates.map(c => {
           const rawStage = c.stage || 'prospect';
+          let prefData = {};
+          if (c.preferred_job_type) {
+            try {
+              prefData = typeof c.preferred_job_type === 'string' ? JSON.parse(c.preferred_job_type) : (c.preferred_job_type || {});
+            } catch (_) {
+              prefData = {};
+            }
+          }
+          const prefLocations = Array.isArray(prefData.preferredLocations)
+            ? prefData.preferredLocations
+            : (Array.isArray(prefData.preferred_locations) ? prefData.preferred_locations : []);
+
           return {
             ...c,
             stage: rawStage,
             skills: typeof c.skills === 'string' ? (() => { try { return JSON.parse(c.skills); } catch (_) { return c.skills.split(',').map(s => s.trim()); } })() : (c.skills || []),
             name: `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Candidate',
+            current_job_title: c.job_title || c.designation || null,
+            current_company: c.company_name || null,
+            preferred_locations: prefLocations,
+            notice_period: prefData.noticePeriod || prefData.notice_period || null,
+            expected_salary: prefData.expectedSalary || prefData.expected_salary || null,
             saved_in_folders: (candidateFoldersMap[c.id] || [{
               folder_id: folder.id,
               folder_name: folder.name,

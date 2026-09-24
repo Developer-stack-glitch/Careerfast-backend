@@ -256,7 +256,7 @@ const JobsModel = {
         internship_start_type,
         internship_start_date,
         last_date_to_apply
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
       const values = [
@@ -715,18 +715,26 @@ const JobsModel = {
         }
       }
 
+      const safeParse = (value) => {
+        try {
+          return typeof value === 'string' ? JSON.parse(value) : (value || []);
+        } catch {
+          return Array.isArray(value) ? value : (value ? [value] : []);
+        }
+      };
+
       const postData = rows.map((item) => {
         return {
           ...item,
           date_posted: dayjs(item.created_at).local().from(now),
-          duration_period: JSON.parse(item.duration_period),
-          work_location: JSON.parse(item.work_location),
-          skills: JSON.parse(item.skills),
-          experience_required: JSON.parse(item.experience_required),
-          diversity_hiring: JSON.parse(item.diversity_hiring),
-          job_category: JSON.parse(item.job_category),
-          benefits: JSON.parse(item.benefits),
-          team_members: item.team_members ? JSON.parse(item.team_members) : [],
+          duration_period: safeParse(item.duration_period),
+          work_location: safeParse(item.work_location),
+          skills: safeParse(item.skills),
+          experience_required: safeParse(item.experience_required),
+          diversity_hiring: safeParse(item.diversity_hiring),
+          job_category: safeParse(item.job_category),
+          benefits: safeParse(item.benefits),
+          team_members: item.team_members ? safeParse(item.team_members) : [],
           users: rows
             .filter((row) => row.user_id)
             .map((row) => ({
@@ -738,7 +746,7 @@ const JobsModel = {
               image: row.profile_image,
               resume: row.resume,
               about: row.about,
-              skills: row.user_skills ? JSON.parse(row.user_skills) : [],
+              skills: row.user_skills ? safeParse(row.user_skills) : [],
               gender: row.gender,
               location: row.location,
               total_years: row.total_years,
@@ -816,14 +824,22 @@ const JobsModel = {
 
       // Add statuses filter if provided
       if (statuses && statuses.length > 0) {
-        const isClosedVals = [];
-        if (statuses.includes('active')) isClosedVals.push(0);
-        if (statuses.includes('closed')) isClosedVals.push(1);
+        const statusConditions = [];
+        if (statuses.includes('active')) {
+          statusConditions.push(`((job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND job_post.approval_status = 'approved')`);
+        }
+        if (statuses.includes('pending')) {
+          statusConditions.push(`((job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND (job_post.approval_status = 'pending' OR job_post.approval_status IS NULL))`);
+        }
+        if (statuses.includes('closed') || statuses.includes('expired')) {
+          statusConditions.push(`(job_post.is_closed = 1)`);
+        }
+        if (statuses.includes('rejected')) {
+          statusConditions.push(`((job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND job_post.approval_status = 'rejected')`);
+        }
 
-        if (isClosedVals.length > 0) {
-          whereClause += ` AND is_closed IN (${isClosedVals.map(() => '?').join(',')})`;
-          countValues.push(...isClosedVals);
-          queryValues.push(...isClosedVals);
+        if (statusConditions.length > 0) {
+          whereClause += ` AND (${statusConditions.join(' OR ')})`;
         }
       }
 
@@ -902,12 +918,15 @@ const JobsModel = {
       if (role_id === 1) {
         statsQuery = `
           SELECT 
-            SUM(CASE WHEN is_closed = 0 THEN 1 ELSE 0 END) as openJobs,
-            SUM(CASE WHEN is_closed != 0 THEN 1 ELSE 0 END) as closedJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved' THEN 1 ELSE 0 END) as openJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) as pendingJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'rejected' THEN 1 ELSE 0 END) as rejectedJobs,
+            SUM(CASE WHEN is_closed = 1 THEN 1 ELSE 0 END) as closedJobs,
             SUM(candidates_count) as totalApplications
           FROM (
             SELECT 
               jp.is_closed, 
+              jp.approval_status,
               COUNT(DISTINCT aj.id) as candidates_count
             FROM job_post jp
             LEFT JOIN applied_jobs aj ON aj.postId = jp.id
@@ -917,12 +936,15 @@ const JobsModel = {
       } else {
         statsQuery = `
           SELECT 
-            SUM(CASE WHEN is_closed = 0 THEN 1 ELSE 0 END) as openJobs,
-            SUM(CASE WHEN is_closed != 0 THEN 1 ELSE 0 END) as closedJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved' THEN 1 ELSE 0 END) as openJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) as pendingJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'rejected' THEN 1 ELSE 0 END) as rejectedJobs,
+            SUM(CASE WHEN is_closed = 1 THEN 1 ELSE 0 END) as closedJobs,
             SUM(candidates_count) as totalApplications
           FROM (
             SELECT 
               jp.is_closed, 
+              jp.approval_status,
               COUNT(DISTINCT aj.id) as candidates_count
             FROM job_post jp
             LEFT JOIN applied_jobs aj ON aj.postId = jp.id
@@ -934,9 +956,11 @@ const JobsModel = {
       }
       const [statsResult] = await pool.query(statsQuery, statsValues);
       const stats = {
-        openJobs: statsResult[0]?.openJobs || 0,
-        closedJobs: statsResult[0]?.closedJobs || 0,
-        totalApplications: statsResult[0]?.totalApplications || 0,
+        openJobs: Number(statsResult[0]?.openJobs) || 0,
+        pendingJobs: Number(statsResult[0]?.pendingJobs) || 0,
+        rejectedJobs: Number(statsResult[0]?.rejectedJobs) || 0,
+        closedJobs: Number(statsResult[0]?.closedJobs) || 0,
+        totalApplications: Number(statsResult[0]?.totalApplications) || 0,
       };
 
       return {
@@ -1038,6 +1062,7 @@ const JobsModel = {
     try {
       let query = `SELECT
                       job_post.id,
+                      job_post.user_id,
                       COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name) AS company_name,
                       COALESCE(NULLIF(job_post.about_company, ''), hr_profiles.about_us) AS company_description,
                       CASE 
@@ -1177,13 +1202,13 @@ const JobsModel = {
 
       // Date range filter
       if (filters.start_date && filters.end_date) {
-        whereClauses.push(`DATE(created_at) BETWEEN ? AND ?`);
+        whereClauses.push(`DATE(job_post.created_at) BETWEEN ? AND ?`);
         queryParams.push(filters.start_date, filters.end_date);
       } else if (filters.start_date) {
-        whereClauses.push(`DATE(created_at) >= ?`);
+        whereClauses.push(`DATE(job_post.created_at) >= ?`);
         queryParams.push(filters.start_date);
       } else if (filters.end_date) {
-        whereClauses.push(`DATE(created_at) <= ?`);
+        whereClauses.push(`DATE(job_post.created_at) <= ?`);
         queryParams.push(filters.end_date);
       }
 
@@ -1236,17 +1261,40 @@ const JobsModel = {
       const [countResult] = await pool.query(countQuery, queryParams);
       const totalCount = countResult[0]?.total || 0;
 
-      // Get global stats (ignoring filters)
+      // Get stats with date and search filtering (ignoring is_closed status filter)
+      const statsWhereClauses = [];
+      const statsQueryParams = [];
+      if (filters.start_date && filters.end_date) {
+        statsWhereClauses.push(`DATE(job_post.created_at) BETWEEN ? AND ?`);
+        statsQueryParams.push(filters.start_date, filters.end_date);
+      } else if (filters.start_date) {
+        statsWhereClauses.push(`DATE(job_post.created_at) >= ?`);
+        statsQueryParams.push(filters.start_date);
+      } else if (filters.end_date) {
+        statsWhereClauses.push(`DATE(job_post.created_at) <= ?`);
+        statsQueryParams.push(filters.end_date);
+      }
+      if (filters.searchTerm) {
+        statsWhereClauses.push(`(LOWER(job_post.job_title) LIKE ? OR LOWER(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) LIKE ?)`);
+        const searchPattern = `%${filters.searchTerm.toLowerCase()}%`;
+        statsQueryParams.push(searchPattern, searchPattern);
+      }
+      if (filters.approval_status) {
+        statsWhereClauses.push(`job_post.approval_status = ?`);
+        statsQueryParams.push(filters.approval_status);
+      }
+
       const statsQuery = `
         SELECT 
           COUNT(*) as totalJobs,
-          SUM(CASE WHEN job_post.is_closed = 0 THEN 1 ELSE 0 END) as activeJobs,
-          SUM(CASE WHEN job_post.is_closed = 1 THEN 1 ELSE 0 END) as closedJobs,
+          COALESCE(SUM(CASE WHEN job_post.is_closed = 0 THEN 1 ELSE 0 END), 0) as activeJobs,
+          COALESCE(SUM(CASE WHEN job_post.is_closed = 1 THEN 1 ELSE 0 END), 0) as closedJobs,
           COUNT(DISTINCT COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) as uniqueCompanies
         FROM job_post
         LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id
+        ${statsWhereClauses.length > 0 ? ` WHERE ${statsWhereClauses.join(" AND ")}` : ''}
       `;
-      const [statsResult] = await pool.query(statsQuery);
+      const [statsResult] = await pool.query(statsQuery, statsQueryParams);
       const globalStats = {
         totalJobs: statsResult[0]?.totalJobs || 0,
         activeJobs: statsResult[0]?.activeJobs || 0,
@@ -1494,6 +1542,24 @@ const JobsModel = {
         [JSON.stringify(skills), user_id]
       );
       return skill.affectedRows;
+    } catch (error) {
+      throw new Error(error.message);
+    }
+  },
+
+  updateVisibility: async ({ visibility_mode, hidden_companies, allow_contact, show_in_search, user_id }) => {
+    try {
+      const [result] = await pool.query(
+        `UPDATE users SET visibility_mode = ?, hidden_companies = ?, allow_contact = ?, show_in_search = ? WHERE id = ?`,
+        [
+          visibility_mode || 'Limited',
+          JSON.stringify(Array.isArray(hidden_companies) ? hidden_companies : []),
+          allow_contact !== undefined ? (allow_contact ? 1 : 0) : 1,
+          show_in_search !== undefined ? (show_in_search ? 1 : 0) : 1,
+          user_id
+        ]
+      );
+      return result.affectedRows;
     } catch (error) {
       throw new Error(error.message);
     }
@@ -1997,23 +2063,25 @@ const JobsModel = {
 
       const now = dayjs().tz("Asia/Kolkata");
 
+      const safeParse = (value) => {
+        try {
+          return typeof value === 'string' ? JSON.parse(value) : (value || []);
+        } catch {
+          return Array.isArray(value) ? value : (value ? [value] : []);
+        }
+      };
+
       // Convert string to array
       const getPosts = result.map((row) => {
         return {
           ...row,
           date_posted: dayjs(row.created_at).tz("Asia/Kolkata").from(now),
-          duration_period: row.duration_period
-            ? JSON.parse(row.duration_period)
-            : [],
-          job_category: row.job_category ? JSON.parse(row.job_category) : [],
-          skills: row.skills ? JSON.parse(row.skills) : [],
-          experience_required: row.experience_required
-            ? JSON.parse(row.experience_required)
-            : [],
-          diversity_hiring: row.diversity_hiring
-            ? JSON.parse(row.diversity_hiring)
-            : [],
-          benefits: row.benefits ? JSON.parse(row.benefits) : [],
+          duration_period: safeParse(row.duration_period),
+          job_category: safeParse(row.job_category),
+          skills: safeParse(row.skills),
+          experience_required: safeParse(row.experience_required),
+          diversity_hiring: safeParse(row.diversity_hiring),
+          benefits: safeParse(row.benefits),
         };
       });
       return getPosts;
@@ -2480,16 +2548,37 @@ const JobsModel = {
     }
   },
 
-  getSuperAdminDashboardData: async (timeFilter) => {
+  getSuperAdminDashboardData: async (timeFilter, startDate = null, endDate = null) => {
     try {
       let uDateCond = "";
       let jDateCond = "";
-      if (timeFilter === "Last 7 Days") {
+      if (startDate && endDate) {
+        uDateCond = ` AND DATE(created_date) BETWEEN '${startDate}' AND '${endDate}'`;
+        jDateCond = ` AND DATE(created_at) BETWEEN '${startDate}' AND '${endDate}'`;
+      } else if (startDate) {
+        uDateCond = ` AND DATE(created_date) >= '${startDate}'`;
+        jDateCond = ` AND DATE(created_at) >= '${startDate}'`;
+      } else if (endDate) {
+        uDateCond = ` AND DATE(created_date) <= '${endDate}'`;
+        jDateCond = ` AND DATE(created_at) <= '${endDate}'`;
+      } else if (timeFilter === "Today") {
+        uDateCond = " AND DATE(created_date) = CURDATE()";
+        jDateCond = " AND DATE(created_at) = CURDATE()";
+      } else if (timeFilter === "Yesterday") {
+        uDateCond = " AND DATE(created_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)";
+        jDateCond = " AND DATE(created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)";
+      } else if (timeFilter === "Last 7 Days") {
         uDateCond = " AND created_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
         jDateCond = " AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
       } else if (timeFilter === "Last 30 Days") {
         uDateCond = " AND created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
         jDateCond = " AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+      } else if (timeFilter === "This Month") {
+        uDateCond = " AND created_date >= DATE_FORMAT(NOW(), '%Y-%m-01')";
+        jDateCond = " AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')";
+      } else if (timeFilter === "Last Month") {
+        uDateCond = " AND created_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND created_date < DATE_FORMAT(NOW(), '%Y-%m-01')";
+        jDateCond = " AND created_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND created_at < DATE_FORMAT(NOW(), '%Y-%m-01')";
       } else if (timeFilter === "This Quarter") {
         uDateCond = " AND created_date >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
         jDateCond = " AND created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
@@ -2579,7 +2668,7 @@ const JobsModel = {
         pool.query(`
           SELECT workplace_type, COUNT(*) as count 
           FROM job_post 
-          WHERE workplace_type IS NOT NULL AND workplace_type != ''
+          WHERE workplace_type IS NOT NULL AND workplace_type != ''${jDateCond}
           GROUP BY workplace_type
         `),
         pool.query(`
@@ -2594,28 +2683,86 @@ const JobsModel = {
                       'Pending'
                   ) AS status
               FROM applied_jobs aj
+              WHERE 1=1${jDateCond}
           ) AS sub
           GROUP BY status
         `),
-        pool.query("SELECT job_category FROM job_post WHERE job_category IS NOT NULL"),
-        pool.query(`SELECT COUNT(id) as activeJobs FROM job_post WHERE is_closed = 0`),
-        pool.query(`
-          SELECT DATE_FORMAT(created_date, '%b %Y') as name, COUNT(id) as uv 
-          FROM users 
-          WHERE created_date >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
-          GROUP BY DATE_FORMAT(created_date, '%b %Y'), YEAR(created_date), MONTH(created_date)
-          ORDER BY YEAR(created_date), MONTH(created_date)
-        `),
-        pool.query(`
-          SELECT DATE_FORMAT(created_at, '%b %Y') as name, COUNT(id) as pv 
-          FROM applied_jobs 
-          WHERE created_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
-          GROUP BY DATE_FORMAT(created_at, '%b %Y'), YEAR(created_at), MONTH(created_at)
-          ORDER BY YEAR(created_at), MONTH(created_at)
-        `),
+        pool.query(`SELECT job_category FROM job_post WHERE job_category IS NOT NULL${jDateCond}`),
+        pool.query(`SELECT COUNT(id) as activeJobs FROM job_post WHERE is_closed = 0${jDateCond}`),
+        (() => {
+          if (timeFilter === "Today" || timeFilter === "Yesterday") {
+            return pool.query(`
+              SELECT DATE_FORMAT(created_date, '%H:00') as name, COUNT(id) as uv 
+              FROM users 
+              WHERE 1=1${uDateCond}
+              GROUP BY name
+              ORDER BY name
+            `);
+          } else if (timeFilter === "Last 7 Days" || timeFilter === "Last 30 Days" || timeFilter === "This Month" || timeFilter === "Last Month") {
+            return pool.query(`
+              SELECT DATE_FORMAT(created_date, '%b %d') as name, COUNT(id) as uv 
+              FROM users 
+              WHERE 1=1${uDateCond}
+              GROUP BY name, DATE(created_date)
+              ORDER BY DATE(created_date)
+            `);
+          } else if (startDate && endDate) {
+            return pool.query(`
+              SELECT DATE_FORMAT(created_date, '%b %d') as name, COUNT(id) as uv 
+              FROM users 
+              WHERE 1=1${uDateCond}
+              GROUP BY name, DATE(created_date)
+              ORDER BY DATE(created_date)
+            `);
+          } else {
+            return pool.query(`
+              SELECT DATE_FORMAT(created_date, '%b %Y') as name, COUNT(id) as uv 
+              FROM users 
+              WHERE 1=1${uDateCond}
+              GROUP BY name, YEAR(created_date), MONTH(created_date)
+              ORDER BY YEAR(created_date), MONTH(created_date)
+            `);
+          }
+        })(),
+        (() => {
+          if (timeFilter === "Today" || timeFilter === "Yesterday") {
+            return pool.query(`
+              SELECT DATE_FORMAT(created_at, '%H:00') as name, COUNT(id) as pv 
+              FROM applied_jobs 
+              WHERE 1=1${jDateCond}
+              GROUP BY name
+              ORDER BY name
+            `);
+          } else if (timeFilter === "Last 7 Days" || timeFilter === "Last 30 Days" || timeFilter === "This Month" || timeFilter === "Last Month") {
+            return pool.query(`
+              SELECT DATE_FORMAT(created_at, '%b %d') as name, COUNT(id) as pv 
+              FROM applied_jobs 
+              WHERE 1=1${jDateCond}
+              GROUP BY name, DATE(created_at)
+              ORDER BY DATE(created_at)
+            `);
+          } else if (startDate && endDate) {
+            return pool.query(`
+              SELECT DATE_FORMAT(created_at, '%b %d') as name, COUNT(id) as pv 
+              FROM applied_jobs 
+              WHERE 1=1${jDateCond}
+              GROUP BY name, DATE(created_at)
+              ORDER BY DATE(created_at)
+            `);
+          } else {
+            return pool.query(`
+              SELECT DATE_FORMAT(created_at, '%b %Y') as name, COUNT(id) as pv 
+              FROM applied_jobs 
+              WHERE 1=1${jDateCond}
+              GROUP BY name, YEAR(created_at), MONTH(created_at)
+              ORDER BY YEAR(created_at), MONTH(created_at)
+            `);
+          }
+        })(),
         pool.query(`
           SELECT job_nature as name, COUNT(id) as value 
           FROM job_post
+          WHERE 1=1${jDateCond}
           GROUP BY job_nature
         `)
       ]);
@@ -2640,7 +2787,7 @@ const JobsModel = {
       const userGrowth = results[16][0];
       const applicationTrends = results[17][0];
       const jobsByNatureRaw = results[18][0];
-      
+
       const jobsByCategory = jobsByNatureRaw.map(j => ({ name: j.name || 'Other', value: j.value }));
 
       return {
@@ -2876,7 +3023,7 @@ const JobsModel = {
   updateApprovalStatus: async (id, status, reason = null) => {
     try {
       const [result] = await pool.query(
-        `UPDATE job_post SET approval_status = ?, rejection_reason = ? WHERE id = ?`, 
+        `UPDATE job_post SET approval_status = ?, rejection_reason = ? WHERE id = ?`,
         [status, reason, id]
       );
       return result;
