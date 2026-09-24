@@ -450,10 +450,20 @@ const CandidateSearchModel = {
       const formattedCandidates = candidates.map((user) => {
         let parsedSkills = [];
         try {
-          parsedSkills = user.skills ? JSON.parse(user.skills) : [];
+          const raw = user.skills ? JSON.parse(user.skills) : [];
+          if (Array.isArray(raw)) {
+            parsedSkills = raw.flatMap(s => typeof s === 'string' ? s.split(',') : s);
+          } else if (typeof raw === 'string') {
+            parsedSkills = raw.split(',');
+          }
         } catch (e) {
-          parsedSkills = user.skills ? user.skills.split(",").map(s => s.replace(/['"]+/g, "").trim()) : [];
+          parsedSkills = user.skills ? user.skills.split(',') : [];
         }
+        parsedSkills = Array.from(new Set(
+          parsedSkills
+            .map(s => String(s || '').replace(/[\[\]'"]+/g, '').trim())
+            .filter(Boolean)
+        ));
 
         const userProfs = profListMap[user.id] || [];
         const currentProf = userProfs.find(p => p.currently_working == 1) || userProfs[0] || null;
