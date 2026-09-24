@@ -348,7 +348,7 @@ const CandidateSearchModel = {
         orderByClause = " ORDER BY u.created_date DESC, u.id DESC";
       } else if (sortBy === "Relevance") {
         if (searchTerms.length > 0) {
-          const boostClauses = searchTerms.map(() => `(CASE WHEN u.skills LIKE ? OR up.job_title LIKE ? OR u.about LIKE ? THEN 1 ELSE 0 END)`);
+          const boostClauses = searchTerms.map(() => `(CASE WHEN u.skills LIKE ? OR u.about LIKE ? OR CONCAT(u.first_name, ' ', u.last_name) LIKE ? THEN 1 ELSE 0 END)`);
           orderByClause = ` ORDER BY (${boostClauses.join(' + ')}) DESC, COALESCE(u.last_active, u.updated_date, u.created_date) DESC, u.id DESC`;
           searchTerms.forEach(term => {
             const p = `%${term}%`;
