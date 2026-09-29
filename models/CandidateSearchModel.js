@@ -53,7 +53,6 @@ const CandidateSearchModel = {
         searchTerms = Array.from(new Set(rawTerms.map(t => t.trim()).filter(Boolean)));
       }
 
-      // Check which joined tables are actually required for this query
       const hasSearchTerms = searchTerms.length > 0;
       const hasSkills = Array.isArray(skills) && skills.length > 0;
       const hasJobTitle = Array.isArray(jobTitle) && jobTitle.length > 0;
@@ -63,10 +62,6 @@ const CandidateSearchModel = {
       const hasIndustry = Array.isArray(industry) && industry.length > 0;
       const hasDesignation = Boolean(designation && designation.trim());
       const hasEducation = Array.isArray(education) && education.length > 0;
-
-      // Only perform joins if the query actually filters or searches on those tables
-      const needsProfJoin = hasSearchTerms || hasSkills || hasJobTitle || hasCompany || hasExcludedCompanies || hasExcludedKeywords || hasIndustry || hasDesignation;
-      const needsEduJoin = hasSearchTerms || hasEducation;
 
       const whereClauses = ["u.role_id = 2"];
       const queryParams = [];
@@ -86,7 +81,7 @@ const CandidateSearchModel = {
         whereClauses.push("(u.is_active = 1 OR u.is_active IS NULL)");
       }
 
-      // Global Keyword Search (matches ANY or ALL words)
+      // Global Keyword Search (matches ANY or ALL words across profile, experience & education)
       if (hasSearchTerms) {
         const operator = keywordMatch === 'all' ? ' AND ' : ' OR ';
         const termClauses = searchTerms.map(() => `(
@@ -99,18 +94,30 @@ const CandidateSearchModel = {
           u.skills LIKE ? OR 
           u.course LIKE ? OR 
           u.about LIKE ? OR 
-          up.job_title LIKE ? OR 
-          up.company_name LIKE ? OR 
-          up.designation LIKE ? OR 
-          ue.course LIKE ? OR 
-          ue.college LIKE ? OR 
-          ue.specialization LIKE ?
+          EXISTS (
+            SELECT 1 FROM user_professional up 
+            WHERE up.user_id = u.id AND up.is_deleted = 0 AND (
+              up.job_title LIKE ? OR 
+              up.company_name LIKE ? OR 
+              up.designation LIKE ? OR 
+              up.skills LIKE ?
+            )
+          ) OR 
+          EXISTS (
+            SELECT 1 FROM user_education ue 
+            WHERE ue.user_id = u.id AND ue.is_deleted = 0 AND (
+              ue.course LIKE ? OR 
+              ue.college LIKE ? OR 
+              ue.specialization LIKE ?
+            )
+          )
         )`);
 
         whereClauses.push(`(${termClauses.join(operator)})`);
         searchTerms.forEach(term => {
           const searchPattern = `%${term}%`;
-          for (let i = 0; i < 15; i++) {
+          // 9 params for u.*, 4 params for up.*, 3 params for ue.* = 16 total
+          for (let i = 0; i < 16; i++) {
             queryParams.push(searchPattern);
           }
         });
@@ -125,8 +132,13 @@ const CandidateSearchModel = {
               u.last_name LIKE ? OR 
               u.skills LIKE ? OR 
               u.about LIKE ? OR 
-              up.job_title LIKE ? OR 
-              up.company_name LIKE ?
+              EXISTS (
+                SELECT 1 FROM user_professional up 
+                WHERE up.user_id = u.id AND up.is_deleted = 0 AND (
+                  up.job_title LIKE ? OR 
+                  up.company_name LIKE ?
+                )
+              )
             )`);
             const exPattern = `%${kw.trim()}%`;
             for (let i = 0; i < 6; i++) {
@@ -138,7 +150,13 @@ const CandidateSearchModel = {
 
       // Skills Filter
       if (hasSkills) {
-        const skillConditions = skills.map(() => `(u.skills LIKE ? OR up.skills LIKE ?)`).join(' OR ');
+        const skillConditions = skills.map(() => `(
+          u.skills LIKE ? OR 
+          EXISTS (
+            SELECT 1 FROM user_professional up 
+            WHERE up.user_id = u.id AND up.is_deleted = 0 AND up.skills LIKE ?
+          )
+        )`).join(' OR ');
         whereClauses.push(`(${skillConditions})`);
         skills.forEach(skill => {
           queryParams.push(`%${skill.trim()}%`, `%${skill.trim()}%`);
@@ -160,28 +178,37 @@ const CandidateSearchModel = {
       // Job Title Filter
       if (hasJobTitle) {
         const titleConditions = jobTitle.map(() => `up.job_title LIKE ?`).join(' OR ');
-        whereClauses.push(`(${titleConditions})`);
+        whereClauses.push(`EXISTS (
+          SELECT 1 FROM user_professional up 
+          WHERE up.user_id = u.id AND up.is_deleted = 0 AND (${titleConditions})
+        )`);
         jobTitle.forEach(title => queryParams.push(`%${title.trim()}%`));
       }
 
       // Company Filter
       if (hasCompany) {
         const companyConditions = company.map(() => `up.company_name LIKE ?`).join(' OR ');
-        whereClauses.push(`(${companyConditions})`);
-        company.forEach(comp => queryParams.push(`%${comp.trim()}%`));
-
+        let extraCompany = '';
         if (companyMatch === 'Current employees') {
-          whereClauses.push(`up.currently_working = 1`);
+          extraCompany = ' AND up.currently_working = 1';
         } else if (companyMatch === 'Past employees') {
-          whereClauses.push(`(up.currently_working = 0 OR up.currently_working IS NULL)`);
+          extraCompany = ' AND (up.currently_working = 0 OR up.currently_working IS NULL)';
         }
+        whereClauses.push(`EXISTS (
+          SELECT 1 FROM user_professional up 
+          WHERE up.user_id = u.id AND up.is_deleted = 0 AND (${companyConditions})${extraCompany}
+        )`);
+        company.forEach(comp => queryParams.push(`%${comp.trim()}%`));
       }
 
       // Excluded Companies
       if (hasExcludedCompanies) {
         excludedCompanies.forEach(comp => {
           if (comp.trim()) {
-            whereClauses.push(`(up.company_name IS NULL OR up.company_name NOT LIKE ?)`);
+            whereClauses.push(`NOT EXISTS (
+              SELECT 1 FROM user_professional up 
+              WHERE up.user_id = u.id AND up.is_deleted = 0 AND up.company_name LIKE ?
+            )`);
             queryParams.push(`%${comp.trim()}%`);
           }
         });
@@ -189,7 +216,13 @@ const CandidateSearchModel = {
 
       // Industry Filter
       if (hasIndustry) {
-        const indConditions = industry.map(() => `(up.job_title LIKE ? OR up.skills LIKE ? OR u.skills LIKE ? OR u.organization LIKE ?)`).join(' OR ');
+        const indConditions = industry.map(() => `(
+          u.skills LIKE ? OR u.organization LIKE ? OR 
+          EXISTS (
+            SELECT 1 FROM user_professional up 
+            WHERE up.user_id = u.id AND up.is_deleted = 0 AND (up.job_title LIKE ? OR up.skills LIKE ?)
+          )
+        )`).join(' OR ');
         whereClauses.push(`(${indConditions})`);
         industry.forEach(ind => {
           queryParams.push(`%${ind.trim()}%`, `%${ind.trim()}%`, `%${ind.trim()}%`, `%${ind.trim()}%`);
@@ -198,7 +231,10 @@ const CandidateSearchModel = {
 
       // Designation Filter
       if (hasDesignation) {
-        whereClauses.push(`(up.designation LIKE ? OR up.job_title LIKE ?)`);
+        whereClauses.push(`EXISTS (
+          SELECT 1 FROM user_professional up 
+          WHERE up.user_id = u.id AND up.is_deleted = 0 AND (up.designation LIKE ? OR up.job_title LIKE ?)
+        )`);
         queryParams.push(`%${designation.trim()}%`, `%${designation.trim()}%`);
       }
 
@@ -213,11 +249,11 @@ const CandidateSearchModel = {
       if (hasEducation) {
         const eduConditions = education.map(edu => {
           if (edu === 'Any UG' || edu === 'Graduation') {
-            return `(u.course IS NOT NULL OR ue.qualification = 'Graduation' OR ue.course IS NOT NULL)`;
+            return `(u.course IS NOT NULL OR EXISTS (SELECT 1 FROM user_education ue WHERE ue.user_id = u.id AND ue.is_deleted = 0 AND (ue.qualification = 'Graduation' OR ue.course IS NOT NULL)))`;
           } else if (edu === 'Any PG' || edu === 'Post Graduation') {
-            return `(ue.qualification = 'Post Graduation' OR u.course LIKE '%M%' OR u.course LIKE '%MBA%')`;
+            return `(u.course LIKE '%M%' OR u.course LIKE '%MBA%' OR EXISTS (SELECT 1 FROM user_education ue WHERE ue.user_id = u.id AND ue.is_deleted = 0 AND ue.qualification = 'Post Graduation'))`;
           } else {
-            return `(u.course LIKE ? OR ue.course LIKE ? OR ue.qualification LIKE ?)`;
+            return `(u.course LIKE ? OR EXISTS (SELECT 1 FROM user_education ue WHERE ue.user_id = u.id AND ue.is_deleted = 0 AND (ue.course LIKE ? OR ue.qualification LIKE ?)))`;
           }
         });
         
@@ -314,20 +350,10 @@ const CandidateSearchModel = {
         queryParams.push(...companyHeadcount);
       }
 
-      // Build FROM clause (joins only if needed)
-      let fromClause = "FROM users u";
-      if (needsProfJoin) {
-        fromClause += " LEFT JOIN user_professional up ON u.id = up.user_id AND up.is_deleted = 0";
-      }
-      if (needsEduJoin) {
-        fromClause += " LEFT JOIN user_education ue ON u.id = ue.user_id AND ue.is_deleted = 0";
-      }
-
       const whereSQL = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : "";
 
       // 1. FAST COUNT: Direct COUNT on indexed ID without creating massive derived tables
-      const countSelect = (needsProfJoin || needsEduJoin) ? "COUNT(DISTINCT u.id) as total" : "COUNT(*) as total";
-      const countQuery = `SELECT ${countSelect} ${fromClause}${whereSQL}`;
+      const countQuery = `SELECT COUNT(*) as total FROM users u${whereSQL}`;
       const [countResult] = await pool.query(countQuery, queryParams);
       const totalCount = countResult[0]?.total || 0;
 
@@ -364,7 +390,6 @@ const CandidateSearchModel = {
       const parsedPage = parseInt(page, 10) || 1;
       const offset = (parsedPage - 1) * parsedLimit;
 
-      const distinctKeyword = (needsProfJoin || needsEduJoin) ? "DISTINCT " : "";
       const candidateColumns = `
         u.id, u.role_id, u.first_name, u.last_name, u.phone_code, u.phone,
         u.email, u.gender, u.is_email_verified, u.profile_image, u.resume,
@@ -376,8 +401,8 @@ const CandidateSearchModel = {
       `;
 
       const dataQuery = `
-        SELECT ${distinctKeyword}${candidateColumns}
-        ${fromClause}${whereSQL}
+        SELECT ${candidateColumns}
+        FROM users u${whereSQL}
         ${orderByClause}
         LIMIT ? OFFSET ?
       `;
