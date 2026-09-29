@@ -1,7 +1,10 @@
 const db = require("../config/dbConfig");
+let coursesCache = new Map();
+const COURSES_CACHE_TTL = 5 * 60 * 1000;
 
 const CourseModel = {
     create: async (title, description, link, imageBase64, content, slug, category) => {
+        coursesCache.clear();
         const sql =
             "INSERT INTO courses (title, description, link, image, content, slug, category) VALUES (?, ?, ?, ?, ?, ?, ?)";
         try {
@@ -18,6 +21,13 @@ const CourseModel = {
 
     getAll: async (limit) => {
         try {
+            const cacheKey = `limit_${limit || 'all'}`;
+            const cached = coursesCache.get(cacheKey);
+            const now = Date.now();
+            if (cached && (now - cached.time < COURSES_CACHE_TTL)) {
+                return { success: true, data: cached.data };
+            }
+
             let sql = "SELECT id, title, description, link, image, content, slug, category, created_at FROM courses ORDER BY id DESC";
             const params = [];
             if (limit && !isNaN(limit)) {
@@ -25,6 +35,7 @@ const CourseModel = {
                 params.push(limit);
             }
             const [rows] = await db.query(sql, params);
+            coursesCache.set(cacheKey, { data: rows, time: now });
             return { success: true, data: rows };
         } catch (error) {
             console.error("DB Error:", error);

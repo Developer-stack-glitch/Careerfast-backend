@@ -42,7 +42,10 @@ const getCourses = async (req, res) => {
                 let parsedContent = null;
                 if (course.content) {
                     try {
-                        parsedContent = typeof course.content === 'string' ? JSON.parse(course.content) : course.content;
+                        const raw = typeof course.content === 'string' ? JSON.parse(course.content) : course.content;
+                        // Strip heavy base64 blobs (tools, careerSection) for list views to keep payload under 100KB instead of 6.5MB
+                        const { tools, careerSection, ...lightContent } = raw || {};
+                        parsedContent = lightContent;
                     } catch (e) {
                         console.error("JSON Parse Error for course ID", course.id, e);
                     }

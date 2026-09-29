@@ -335,17 +335,8 @@ const insertHrProfile = async (request, response) => {
 };
 
 const updateSocialLinks = async (request, response) => {
-  const { linkedin, facebook, instagram, twitter, dribble, behance, user_id } = request.body;
   try {
-    const result = await userModel.updateSocialLinks(
-      linkedin,
-      facebook,
-      instagram,
-      twitter,
-      dribble,
-      behance,
-      user_id
-    );
+    const result = await userModel.updateSocialLinks(request.body);
     response.status(200).json({
       message: "Social links updated successfully!",
       data: result,

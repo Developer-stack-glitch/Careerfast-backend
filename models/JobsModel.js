@@ -8,6 +8,21 @@ dayjs.extend(relativeTime);
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
+// In-memory caches for high-traffic homepage and catalog endpoints
+let homePageStatsCache = null;
+let homePageStatsCacheTime = 0;
+const STATS_CACHE_TTL = 60 * 1000; // 60s
+
+let trendingSearchesCache = null;
+let trendingSearchesCacheTime = 0;
+const TRENDING_CACHE_TTL = 5 * 60 * 1000; // 5m
+
+const categoriesCache = new Map();
+const CATEGORIES_CACHE_TTL = 5 * 60 * 1000; // 5m
+
+const jobPostsCache = new Map();
+const JOB_POSTS_CACHE_TTL = 60 * 1000; // 60s
+
 const JobsModel = {
   insertJobNature: async (nature_name) => {
     try {
@@ -641,6 +656,7 @@ const JobsModel = {
     LEFT JOIN users ON users.id = applied_jobs.userId
     LEFT JOIN user_social_links ON user_social_links.user_id = users.id
     WHERE job_post.id = ?
+    ORDER BY applied_jobs.id DESC
   `;
 
     const values = [post_id];
@@ -723,8 +739,51 @@ const JobsModel = {
         }
       };
 
-      const postData = rows.map((item) => {
-        return {
+      const seenUsers = new Set();
+      const uniqueUsers = [];
+
+      for (const row of rows) {
+        if (!row.user_id || seenUsers.has(row.user_id)) continue;
+        seenUsers.add(row.user_id);
+
+        uniqueUsers.push({
+          id: row.user_id,
+          first_name: row.first_name,
+          last_name: row.last_name,
+          email: row.email,
+          phone: row.phone,
+          image: row.profile_image,
+          resume: row.resume,
+          about: row.about,
+          skills: row.user_skills ? safeParse(row.user_skills) : [],
+          gender: row.gender,
+          location: row.location,
+          total_years: row.total_years,
+          total_months: row.total_months,
+          experince_type: row.experince_type,
+          course: row.course,
+          applied_jobs_id: row.applied_jobs_id,
+          applied_date: row.applied_date,
+          status: row.applied_status || 'applied',
+          saved_in_folders: candidateFoldersMap[row.user_id] || [],
+          social_links: {
+            linkedin: row.linkedin,
+            twitter: row.twitter,
+            instagram: row.instagram,
+            facebook: row.facebook,
+            dribble: row.dribble,
+            behance: row.behance,
+          },
+          candidateAnswersForRecruiterQuestions:
+            filterQuestionAnswerList.filter(
+              (f) => f.user_id === row.user_id
+            ),
+        });
+      }
+
+      const item = rows[0];
+      const postData = [
+        {
           ...item,
           date_posted: dayjs(item.created_at).local().from(now),
           duration_period: safeParse(item.duration_period),
@@ -735,43 +794,9 @@ const JobsModel = {
           job_category: safeParse(item.job_category),
           benefits: safeParse(item.benefits),
           team_members: item.team_members ? safeParse(item.team_members) : [],
-          users: rows
-            .filter((row) => row.user_id)
-            .map((row) => ({
-              id: row.user_id,
-              first_name: row.first_name,
-              last_name: row.last_name,
-              email: row.email,
-              phone: row.phone,
-              image: row.profile_image,
-              resume: row.resume,
-              about: row.about,
-              skills: row.user_skills ? safeParse(row.user_skills) : [],
-              gender: row.gender,
-              location: row.location,
-              total_years: row.total_years,
-              total_months: row.total_months,
-              experince_type: row.experince_type,
-              course: row.course,
-              applied_jobs_id: row.applied_jobs_id,
-              applied_date: row.applied_date,
-              status: row.applied_status || 'applied',
-              saved_in_folders: candidateFoldersMap[row.user_id] || [],
-              social_links: {
-                linkedin: row.linkedin,
-                twitter: row.twitter,
-                instagram: row.instagram,
-                facebook: row.facebook,
-                dribble: row.dribble,
-                behance: row.behance,
-              },
-              candidateAnswersForRecruiterQuestions:
-                filterQuestionAnswerList.filter(
-                  (f) => f.user_id === row.user_id
-                ),
-            })),
-        };
-      });
+          users: uniqueUsers,
+        },
+      ];
       return postData;
     } catch (error) {
       throw new Error(error.message);
@@ -1008,50 +1033,99 @@ const JobsModel = {
 
   getJobCategories: async (filters = {}) => {
     try {
-      let query;
-      let values = [];
+      const cacheKey = JSON.stringify(filters);
+      const cached = categoriesCache.get(cacheKey);
+      const now = Date.now();
+      if (cached && (now - cached.time < CATEGORIES_CACHE_TTL)) {
+        return cached.data;
+      }
 
-      let whereClauses = ["c.is_active = 1"];
-      let hasFilters = false;
+      const jobWhereClauses = [];
+      const jobValues = [];
 
       if (filters.job_nature) {
-        whereClauses.push("j.job_nature = ?");
-        values.push(filters.job_nature);
-        hasFilters = true;
+        jobWhereClauses.push("job_nature = ?");
+        jobValues.push(filters.job_nature);
       }
-
       if (filters.experience_type) {
-        whereClauses.push("j.experience_type = ?");
-        values.push(filters.experience_type);
-        hasFilters = true;
+        jobWhereClauses.push("experience_type = ?");
+        jobValues.push(filters.experience_type);
       }
 
-      if (filters.min_jobs || hasFilters) {
-        let havingClause = "";
-        if (filters.min_jobs) {
-          havingClause = "HAVING COUNT(DISTINCT j.id) >= ?";
-          values.push(parseInt(filters.min_jobs, 10));
-        }
+      const hasFilters = jobWhereClauses.length > 0;
+      const minJobs = filters.min_jobs ? parseInt(filters.min_jobs, 10) : (hasFilters ? 1 : 0);
 
-        query = `
-          SELECT c.id, c.category_name 
-          FROM job_categories c
-          JOIN job_post j ON JSON_CONTAINS(j.job_category, JSON_QUOTE(c.category_name))
-          WHERE ${whereClauses.join(" AND ")}
-          GROUP BY c.id, c.category_name
-          ${havingClause}
-          ORDER BY CASE WHEN c.category_name = 'Others' THEN 1 ELSE 0 END, c.category_name
-        `;
-      } else {
-        query = `
-          SELECT id, category_name 
+      let categories = [];
+
+      if (!minJobs && !hasFilters) {
+        const [rows] = await pool.query(`
+          SELECT MIN(id) as id, category_name 
           FROM job_categories 
           WHERE is_active = 1 
+          GROUP BY category_name
           ORDER BY CASE WHEN category_name = 'Others' THEN 1 ELSE 0 END, category_name
-        `;
+        `);
+        categories = rows;
+      } else {
+        const [activeCats] = await pool.query(`
+          SELECT MIN(id) as id, category_name 
+          FROM job_categories 
+          WHERE is_active = 1 
+          GROUP BY category_name
+        `);
+
+        const activeMap = new Map();
+        for (const cat of activeCats) {
+          if (cat.category_name) {
+            activeMap.set(cat.category_name.trim().toLowerCase(), {
+              id: cat.id,
+              category_name: cat.category_name.trim()
+            });
+          }
+        }
+
+        const whereSql = jobWhereClauses.length > 0 ? `WHERE ${jobWhereClauses.join(" AND ")}` : "";
+        const [jobs] = await pool.query(`SELECT job_category FROM job_post ${whereSql}`, jobValues);
+
+        const counts = new Map();
+        for (const row of jobs) {
+          if (!row.job_category) continue;
+          let list = [];
+          try {
+            list = typeof row.job_category === 'string' ? JSON.parse(row.job_category) : row.job_category;
+          } catch (e) {
+            continue;
+          }
+          if (!Array.isArray(list)) continue;
+
+          const seenInJob = new Set();
+          for (const c of list) {
+            const name = String(c).trim();
+            const lower = name.toLowerCase();
+            if (name && !seenInJob.has(lower)) {
+              seenInJob.add(lower);
+              if (activeMap.has(lower)) {
+                counts.set(lower, (counts.get(lower) || 0) + 1);
+              }
+            }
+          }
+        }
+
+        for (const [lower, catObj] of activeMap.entries()) {
+          const count = counts.get(lower) || 0;
+          if (count >= minJobs) {
+            categories.push(catObj);
+          }
+        }
+
+        categories.sort((a, b) => {
+          if (a.category_name === 'Others') return 1;
+          if (b.category_name === 'Others') return -1;
+          return a.category_name.localeCompare(b.category_name);
+        });
       }
 
-      const [categories] = await pool.query(query, values);
+      categoriesCache.set(cacheKey, { data: categories, time: now });
       return categories;
     } catch (error) {
       throw new Error(error.message);
@@ -1060,6 +1134,16 @@ const JobsModel = {
 
   getJobPosts: async (filters = {}) => {
     try {
+      const isPublic = !filters.user_id && !filters.admin_user_id;
+      const cacheKey = isPublic ? JSON.stringify(filters) : null;
+      if (cacheKey && jobPostsCache.has(cacheKey)) {
+        const cached = jobPostsCache.get(cacheKey);
+        if (Date.now() - cached.time < JOB_POSTS_CACHE_TTL) {
+          return cached.data;
+        }
+        jobPostsCache.delete(cacheKey);
+      }
+
       let query = `SELECT
                       job_post.id,
                       job_post.user_id,
@@ -1247,81 +1331,108 @@ const JobsModel = {
         queryParams.push(filters.approval_status);
       }
 
-      if (whereClauses.length > 0) {
-        query += ` WHERE ${whereClauses.join(" AND ")}`;
-      }
-
-      // Get total count before applying pagination
+      // Check if hr_profiles join is needed in count and id query
+      const hasHrInWhere = filters.searchTerm ? true : false;
       const countQuery = `
         SELECT COUNT(*) as total 
         FROM job_post
-        LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id
+        ${hasHrInWhere ? 'LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id' : ''}
         ${whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : ''}
       `;
-      const [countResult] = await pool.query(countQuery, queryParams);
-      const totalCount = countResult[0]?.total || 0;
-
-      // Get stats with date and search filtering (ignoring is_closed status filter)
-      const statsWhereClauses = [];
-      const statsQueryParams = [];
-      if (filters.start_date && filters.end_date) {
-        statsWhereClauses.push(`DATE(job_post.created_at) BETWEEN ? AND ?`);
-        statsQueryParams.push(filters.start_date, filters.end_date);
-      } else if (filters.start_date) {
-        statsWhereClauses.push(`DATE(job_post.created_at) >= ?`);
-        statsQueryParams.push(filters.start_date);
-      } else if (filters.end_date) {
-        statsWhereClauses.push(`DATE(job_post.created_at) <= ?`);
-        statsQueryParams.push(filters.end_date);
-      }
-      if (filters.searchTerm) {
-        statsWhereClauses.push(`(LOWER(job_post.job_title) LIKE ? OR LOWER(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) LIKE ?)`);
-        const searchPattern = `%${filters.searchTerm.toLowerCase()}%`;
-        statsQueryParams.push(searchPattern, searchPattern);
-      }
-      if (filters.approval_status) {
-        statsWhereClauses.push(`job_post.approval_status = ?`);
-        statsQueryParams.push(filters.approval_status);
-      }
-
-      const statsQuery = `
-        SELECT 
-          COUNT(*) as totalJobs,
-          COALESCE(SUM(CASE WHEN job_post.is_closed = 0 THEN 1 ELSE 0 END), 0) as activeJobs,
-          COALESCE(SUM(CASE WHEN job_post.is_closed = 1 THEN 1 ELSE 0 END), 0) as closedJobs,
-          COUNT(DISTINCT COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) as uniqueCompanies
-        FROM job_post
-        LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id
-        ${statsWhereClauses.length > 0 ? ` WHERE ${statsWhereClauses.join(" AND ")}` : ''}
-      `;
-      const [statsResult] = await pool.query(statsQuery, statsQueryParams);
-      const globalStats = {
-        totalJobs: statsResult[0]?.totalJobs || 0,
-        activeJobs: statsResult[0]?.activeJobs || 0,
-        closedJobs: statsResult[0]?.closedJobs || 0,
-        uniqueCompanies: statsResult[0]?.uniqueCompanies || 0
-      };
 
       // Salary sorting
+      let orderClause = "";
       if (filters.salary_sort) {
         if (filters.salary_sort === "low_to_high") {
-          query += ` ORDER BY COALESCE(min_salary, 0) ASC`;
+          orderClause = ` ORDER BY COALESCE(job_post.min_salary, 0) ASC`;
         } else if (filters.salary_sort === "high_to_low") {
-          query += ` ORDER BY COALESCE(max_salary, 0) DESC`;
+          orderClause = ` ORDER BY COALESCE(job_post.max_salary, 0) DESC`;
         }
       } else {
-        query += ` ORDER BY created_at DESC`;
+        orderClause = ` ORDER BY job_post.created_at DESC`;
       }
 
       // Apply pagination with LIMIT and OFFSET
-      const limit = filters.limit || 20;
-      const page = filters.page || 1;
+      const limit = Number(filters.limit) || 20;
+      const page = Number(filters.page) || 1;
       const offset = (page - 1) * limit;
 
-      query += ` LIMIT ? OFFSET ?`;
-      queryParams.push(limit, offset);
+      const idQuery = `
+        SELECT job_post.id
+        FROM job_post
+        ${hasHrInWhere ? 'LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id' : ''}
+        ${whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : ''}
+        ${orderClause}
+        LIMIT ? OFFSET ?
+      `;
 
-      const [posts] = await pool.query(query, queryParams);
+      // Run countQuery and idQuery in parallel for maximum performance
+      const [countResultPromise, idResultPromise] = await Promise.all([
+        pool.query(countQuery, queryParams),
+        pool.query(idQuery, [...queryParams, limit, offset])
+      ]);
+
+      const totalCount = countResultPromise[0][0]?.total || 0;
+      const idRows = idResultPromise[0] || [];
+
+      let posts = [];
+      if (idRows.length > 0) {
+        const postIds = idRows.map(r => r.id);
+        const placeholders = postIds.map(() => '?').join(',');
+        const fullQuery = `${query} WHERE job_post.id IN (${placeholders}) ${orderClause}`;
+        const [fullPosts] = await pool.query(fullQuery, postIds);
+        posts = fullPosts;
+      }
+
+      // Get stats only if requested (e.g. admin dashboard) to avoid massive full-table scan on public pages
+      let globalStats = {
+        totalJobs: totalCount,
+        activeJobs: 0,
+        closedJobs: 0,
+        uniqueCompanies: 0
+      };
+
+      if (filters.include_stats) {
+        const statsWhereClauses = [];
+        const statsQueryParams = [];
+        if (filters.start_date && filters.end_date) {
+          statsWhereClauses.push(`DATE(job_post.created_at) BETWEEN ? AND ?`);
+          statsQueryParams.push(filters.start_date, filters.end_date);
+        } else if (filters.start_date) {
+          statsWhereClauses.push(`DATE(job_post.created_at) >= ?`);
+          statsQueryParams.push(filters.start_date);
+        } else if (filters.end_date) {
+          statsWhereClauses.push(`DATE(job_post.created_at) <= ?`);
+          statsQueryParams.push(filters.end_date);
+        }
+        if (filters.searchTerm) {
+          statsWhereClauses.push(`(LOWER(job_post.job_title) LIKE ? OR LOWER(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) LIKE ?)`);
+          const searchPattern = `%${filters.searchTerm.toLowerCase()}%`;
+          statsQueryParams.push(searchPattern, searchPattern);
+        }
+        if (filters.approval_status) {
+          statsWhereClauses.push(`job_post.approval_status = ?`);
+          statsQueryParams.push(filters.approval_status);
+        }
+
+        const statsQuery = `
+          SELECT 
+            COUNT(*) as totalJobs,
+            COALESCE(SUM(CASE WHEN job_post.is_closed = 0 THEN 1 ELSE 0 END), 0) as activeJobs,
+            COALESCE(SUM(CASE WHEN job_post.is_closed = 1 THEN 1 ELSE 0 END), 0) as closedJobs,
+            COUNT(DISTINCT COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) as uniqueCompanies
+          FROM job_post
+          LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id
+          ${statsWhereClauses.length > 0 ? ` WHERE ${statsWhereClauses.join(" AND ")}` : ''}
+        `;
+        const [statsResult] = await pool.query(statsQuery, statsQueryParams);
+        globalStats = {
+          totalJobs: statsResult[0]?.totalJobs || 0,
+          activeJobs: statsResult[0]?.activeJobs || 0,
+          closedJobs: statsResult[0]?.closedJobs || 0,
+          uniqueCompanies: statsResult[0]?.uniqueCompanies || 0
+        };
+      }
 
       // Helper function to safely parse JSON arrays
       const safeParseArray = (str) => {
@@ -1377,7 +1488,7 @@ const JobsModel = {
 
       const totalPages = Math.ceil(totalCount / limit);
 
-      return {
+      const responsePayload = {
         success: true,
         message: "Job posts fetched successfully",
         data: processedPosts,
@@ -1391,6 +1502,13 @@ const JobsModel = {
           stats: globalStats
         },
       };
+
+      if (cacheKey) {
+        if (jobPostsCache.size > 200) jobPostsCache.clear();
+        jobPostsCache.set(cacheKey, { time: Date.now(), data: responsePayload });
+      }
+
+      return responsePayload;
     } catch (error) {
       throw new Error(error.message);
     }
@@ -1597,6 +1715,8 @@ const JobsModel = {
     end_date,
     currently_working,
     skills,
+    location,
+    description,
     id,
     user_id
   ) => {
@@ -1615,7 +1735,9 @@ const JobsModel = {
                               start_date = ?,
                               end_date = ?,
                               currently_working = ?,
-                              skills = ?
+                              skills = ?,
+                              location = ?,
+                              description = ?
                           WHERE id = ? AND user_id = ?`;
       const values = [
         job_title,
@@ -1625,6 +1747,8 @@ const JobsModel = {
         end_date,
         currently_working,
         JSON.stringify(skills),
+        location,
+        description,
         id,
         user_id,
       ];
@@ -1648,9 +1772,11 @@ const JobsModel = {
                               start_date,
                               end_date,
                               currently_working,
-                              skills
+                              skills,
+                              location,
+                              description
                           )
-                          VALUES(?, ?, ?, ?, ?, ?, ?, ?)`;
+                          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
           const values = [
             user_id,
             e.job_title,
@@ -1660,6 +1786,8 @@ const JobsModel = {
             e.end_date,
             e.currently_working,
             JSON.stringify(e.skills || []),
+            e.location || null,
+            e.description || null,
           ];
           const [result] = await pool.query(insertQuery, values);
           insertedIds.push(result.insertId);
@@ -2445,15 +2573,25 @@ const JobsModel = {
 
   getHomePageStats: async () => {
     try {
-      const [jobsCount] = await pool.query("SELECT COUNT(*) as total FROM job_post");
-      const [recruitersCount] = await pool.query("SELECT COUNT(DISTINCT company_name) as total FROM job_post");
-      const [applicationsCount] = await pool.query("SELECT COUNT(*) as total FROM applied_jobs");
+      const now = Date.now();
+      if (homePageStatsCache && (now - homePageStatsCacheTime < STATS_CACHE_TTL)) {
+        return homePageStatsCache;
+      }
 
-      return {
-        totalJobs: jobsCount[0].total,
-        totalRecruiters: recruitersCount[0].total,
-        totalApplications: applicationsCount[0].total
+      const [[jobsCount], [recruitersCount], [applicationsCount]] = await Promise.all([
+        pool.query("SELECT COUNT(*) as total FROM job_post"),
+        pool.query("SELECT COUNT(DISTINCT company_name) as total FROM job_post"),
+        pool.query("SELECT COUNT(*) as total FROM applied_jobs")
+      ]);
+
+      homePageStatsCache = {
+        totalJobs: jobsCount[0]?.total || 0,
+        totalRecruiters: recruitersCount[0]?.total || 0,
+        totalApplications: applicationsCount[0]?.total || 0
       };
+      homePageStatsCacheTime = now;
+
+      return homePageStatsCache;
     } catch (error) {
       throw new Error(error.message);
     }
@@ -2461,6 +2599,11 @@ const JobsModel = {
 
   getTrendingSearches: async () => {
     try {
+      const now = Date.now();
+      if (trendingSearchesCache && (now - trendingSearchesCacheTime < TRENDING_CACHE_TTL)) {
+        return trendingSearchesCache;
+      }
+
       // Get all work locations for 'Job'
       const [jobPosts] = await pool.query(
         "SELECT work_location FROM job_post WHERE job_nature = 'Job' AND work_location IS NOT NULL"
@@ -2530,6 +2673,9 @@ const JobsModel = {
           isNew: true
         });
       });
+
+      trendingSearchesCache = trending;
+      trendingSearchesCacheTime = now;
 
       return trending;
     } catch (error) {

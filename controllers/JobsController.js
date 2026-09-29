@@ -708,7 +708,19 @@ const updateProject = async (request, response) => {
 };
 
 const updateResume = async (request, response) => {
-  const { resume, id } = request.body;
+  let id = request.body?.id || request.body?.user_id || request.user?.id;
+  let resume = request.body?.resume;
+
+  if (request.file) {
+    resume = `data:${request.file.mimetype};base64,${request.file.buffer.toString("base64")}`;
+  }
+
+  if (!id || !resume) {
+    return response.status(400).json({
+      message: "Bad Request: Missing user id or resume file",
+    });
+  }
+
   try {
     const result = await JobsModel.updateResume(resume, id);
     response.status(200).send({
@@ -763,7 +775,13 @@ const updateVisibility = async (request, response) => {
 };
 
 const updateAbout = async (request, response) => {
-  const { about, id } = request.body;
+  const id = request.body?.id || request.body?.user_id || request.user?.id;
+  const { about } = request.body;
+  if (!id) {
+    return response.status(400).json({
+      message: "Bad Request: Missing user id",
+    });
+  }
   try {
     const result = await JobsModel.updateAbout(about, id);
     response.status(200).send({
@@ -802,6 +820,8 @@ const updateExperience = async (request, response) => {
     end_date,
     currently_working,
     skills,
+    location,
+    description,
     id,
     user_id,
   } = request.body;
@@ -815,6 +835,8 @@ const updateExperience = async (request, response) => {
       end_date,
       currently_working,
       formattedSkills,
+      location,
+      description,
       id,
       user_id
     );

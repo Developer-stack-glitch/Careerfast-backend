@@ -369,7 +369,7 @@ const UserModel = {
 
 
       const [social_links] = await conn.query(
-        `INSERT INTO user_social_links (user_id) VALUES(?)`,
+        `INSERT IGNORE INTO user_social_links (user_id) VALUES(?)`,
         user_id
       );
 
@@ -383,7 +383,7 @@ const UserModel = {
   },
 
   updateSocialLinks: async (
-    linkedin,
+    dataOrLinkedin,
     facebook,
     instagram,
     twitter,
@@ -392,10 +392,47 @@ const UserModel = {
     user_id
   ) => {
     try {
-      const [result] = await pool.query(
-        `UPDATE user_social_links SET linkedin = ?, facebook = ?, instagram = ?, twitter = ?, dribble = ?, behance = ? WHERE user_id = ?`,
-        [linkedin, facebook, instagram, twitter, dribble, behance, user_id]
-      );
+      let data = {};
+      if (typeof dataOrLinkedin === "object" && dataOrLinkedin !== null) {
+        data = dataOrLinkedin;
+      } else {
+        data = {
+          linkedin: dataOrLinkedin,
+          facebook,
+          instagram,
+          twitter,
+          dribble,
+          behance,
+          user_id,
+        };
+      }
+      const uid = data.user_id || data.userId || data.id;
+      if (!uid) {
+        throw new Error("Invalid user ID");
+      }
+      const linkedin = data.linkedin !== undefined ? data.linkedin : (data.Linkedin || "");
+      const github = data.github !== undefined ? data.github : (data.Github || "");
+      const portfolio = data.portfolio !== undefined ? data.portfolio : (data.Portfolio || "");
+      const fb = data.facebook !== undefined ? data.facebook : (data.Facebook || "");
+      const insta = data.instagram !== undefined ? data.instagram : (data.Instagram || "");
+      const tw = data.twitter !== undefined ? data.twitter : (data.Twitter || "");
+      const dr = data.dribble !== undefined ? data.dribble : (data.dribbble !== undefined ? data.dribbble : (data.Dribbble || ""));
+      const be = data.behance !== undefined ? data.behance : (data.Behance || "");
+
+      const query = `
+        INSERT INTO user_social_links (user_id, linkedin, github, portfolio, facebook, instagram, twitter, dribble, behance)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          linkedin = VALUES(linkedin),
+          github = VALUES(github),
+          portfolio = VALUES(portfolio),
+          facebook = VALUES(facebook),
+          instagram = VALUES(instagram),
+          twitter = VALUES(twitter),
+          dribble = VALUES(dribble),
+          behance = VALUES(behance)
+      `;
+      const [result] = await pool.query(query, [uid, linkedin, github, portfolio, fb, insta, tw, dr, be]);
       return result.affectedRows;
     } catch (error) {
       throw new Error(error.message);
@@ -568,19 +605,24 @@ const UserModel = {
         { key: lastName, col: "last_name" },
         { key: data.gender, col: "gender" },
         { key: data.dob, col: "dob" },
+        { key: data.phone, col: "phone" },
         { key: loc, col: "location" },
+        { key: data.is_email_verified, col: "is_email_verified" },
         { key: userTypeVal, col: "user_type" },
         { key: expType, col: "experince_type" },
         { key: totYears, col: "total_years" },
         { key: totMonths, col: "total_months" },
+        { key: data.careerLevel || data.career_level, col: "career_level" },
+        { key: data.headline, col: "headline" },
         { key: data.class || data.classes, col: "class" },
         { key: data.course, col: "course" },
         { key: data.start_year, col: "start_year" },
         { key: data.end_year, col: "end_year" },
         { key: data.about, col: "about" },
+        { key: data.resume, col: "resume" },
         { key: preferredJobTypeVal, col: "preferred_job_type" },
         {
-          key: data.languages
+          key: data.languages !== undefined
             ? typeof data.languages === "string"
               ? data.languages
               : JSON.stringify(data.languages)
@@ -588,6 +630,52 @@ const UserModel = {
           col: "languages",
         },
         { key: data.visa_status, col: "visa_status" },
+        {
+          key: data.certifications !== undefined
+            ? typeof data.certifications === "string"
+              ? data.certifications
+              : JSON.stringify(data.certifications)
+            : undefined,
+          col: "certifications",
+        },
+        {
+          key: data.accomplishments !== undefined
+            ? typeof data.accomplishments === "string"
+              ? data.accomplishments
+              : JSON.stringify(data.accomplishments)
+            : undefined,
+          col: "accomplishments",
+        },
+        {
+          key: data.additional_info !== undefined
+            ? typeof data.additional_info === "string"
+              ? data.additional_info
+              : JSON.stringify(data.additional_info)
+            : undefined,
+          col: "additional_info",
+        },
+        { key: data.marital_status, col: "marital_status" },
+        { key: data.notice_period, col: "notice_period" },
+        { key: data.expected_salary, col: "expected_salary" },
+        { key: data.current_salary, col: "current_salary" },
+        { key: data.available_from, col: "available_from" },
+        {
+          key: data.preferred_roles !== undefined
+            ? Array.isArray(data.preferred_roles)
+              ? data.preferred_roles.join(", ")
+              : data.preferred_roles
+            : undefined,
+          col: "preferred_roles",
+        },
+        {
+          key: data.preferred_locations !== undefined
+            ? Array.isArray(data.preferred_locations)
+              ? data.preferred_locations.join(", ")
+              : data.preferred_locations
+            : undefined,
+          col: "preferred_locations",
+        },
+        { key: data.willing_to_relocate, col: "willing_to_relocate" },
       ];
 
       for (const item of fieldMappings) {
@@ -762,11 +850,24 @@ const UserModel = {
                         u.visa_status,
                         u.preferred_job_type,
                         u.dob,
+                        u.certifications,
+                        u.accomplishments,
+                        u.additional_info,
+                        u.marital_status,
+                        u.notice_period,
+                        u.expected_salary,
+                        u.current_salary,
+                        u.available_from,
+                        u.preferred_roles,
+                        u.preferred_locations,
+                        u.willing_to_relocate,
                         u.company_headcount,
                         u.visibility_mode,
                         u.hidden_companies,
                         u.allow_contact,
                         u.show_in_search,
+                        u.career_level,
+                        u.headline,
                         u.created_date,
                         COALESCE(u.last_active, (SELECT MAX(created_at) FROM user_daily_usage WHERE user_id = u.id), u.updated_date, u.created_date) AS last_active,
                         ot.name AS organization_type
@@ -807,7 +908,9 @@ const UserModel = {
                                     u.start_date,
                                     u.end_date,
                                     CASE WHEN u.currently_working = 1 THEN 1 ELSE 0 END AS currently_working,
-                                    u.skills
+                                    u.skills,
+                                    u.location,
+                                    u.description
                                 FROM user_professional u
                                 WHERE u.is_deleted = 0 AND u.user_id = ?`;
 
@@ -827,6 +930,8 @@ const UserModel = {
 
       const linksQuery = `SELECT
                             linkedin,
+                            github,
+                            portfolio,
                             facebook,
                             instagram,
                             twitter,
@@ -861,9 +966,62 @@ const UserModel = {
         } catch (e) {
           hiddenCompanies = [];
         }
+
+        let certifications = [];
+        try {
+          if (row.certifications) {
+            certifications = typeof row.certifications === 'string' ? JSON.parse(row.certifications) : row.certifications;
+          }
+        } catch (e) {
+          certifications = [];
+        }
+
+        let accomplishments = [];
+        try {
+          if (row.accomplishments) {
+            accomplishments = typeof row.accomplishments === 'string' ? JSON.parse(row.accomplishments) : row.accomplishments;
+          }
+        } catch (e) {
+          accomplishments = [];
+        }
+
+        let additionalInfo = {};
+        try {
+          if (row.additional_info) {
+            additionalInfo = typeof row.additional_info === 'string' ? JSON.parse(row.additional_info) : row.additional_info;
+          }
+        } catch (e) {
+          additionalInfo = {};
+        }
+
+        let languages = [];
+        try {
+          if (row.languages) {
+            languages = typeof row.languages === 'string'
+              ? (row.languages.startsWith('[') ? JSON.parse(row.languages) : row.languages.split(',').map(s => s.trim()))
+              : row.languages;
+          }
+        } catch (e) {
+          languages = row.languages ? [row.languages] : [];
+        }
+
+        let preferredJobType = row.preferred_job_type;
+        try {
+          if (preferredJobType && typeof preferredJobType === 'string' && preferredJobType.startsWith('{')) {
+            preferredJobType = JSON.parse(preferredJobType);
+          }
+        } catch (e) {
+          // keep as string
+        }
+
         return {
           ...row,
-          skills: row.skills ? JSON.parse(row.skills) : [],
+          skills: row.skills ? (typeof row.skills === 'string' ? JSON.parse(row.skills) : row.skills) : [],
+          certifications: Array.isArray(certifications) ? certifications : [],
+          accomplishments: Array.isArray(accomplishments) ? accomplishments : [],
+          additional_info: additionalInfo || {},
+          languages: Array.isArray(languages) ? languages : (languages ? [languages] : []),
+          preferred_job_type: preferredJobType,
           visibility_mode: row.visibility_mode || 'Limited',
           hidden_companies: Array.isArray(hiddenCompanies) ? hiddenCompanies : [],
           allow_contact: row.allow_contact === null || row.allow_contact === undefined ? true : Boolean(row.allow_contact),
@@ -875,7 +1033,7 @@ const UserModel = {
       const getProfessional = rows.map((row) => {
         return {
           ...row,
-          skills: row.skills ? JSON.parse(row.skills) : [],
+          skills: row.skills ? (typeof row.skills === 'string' ? JSON.parse(row.skills) : row.skills) : [],
         };
       });
 
