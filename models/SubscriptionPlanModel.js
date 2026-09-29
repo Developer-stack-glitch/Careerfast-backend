@@ -252,6 +252,7 @@ const SubscriptionPlanModel = {
           rs.id AS subscription_id,
           rs.recruiter_id,
           rs.company_id,
+          rs.plan_id,
           rs.billing_cycle,
           rs.price_paid,
           rs.start_date,
@@ -259,6 +260,14 @@ const SubscriptionPlanModel = {
           rs.status AS subscription_status,
           rs.payment_status,
           rs.created_at AS subscription_created_at,
+          sp.name AS plan_name,
+          sp.slug AS plan_slug,
+          sp.price AS plan_price,
+          sp.job_post_limit,
+          sp.active_job_limit,
+          sp.resume_view_limit,
+          sp.resume_download_limit,
+          sp.sub_recruiter_limit,
           u.first_name,
           u.last_name,
           u.email AS recruiter_email,
@@ -269,7 +278,14 @@ const SubscriptionPlanModel = {
           hp.industry_type,
           hp.contact_email,
           hp.contact_phone,
-          COALESCE(su.job_posts_used, 0) AS job_posts_used,
+          GREATEST(
+            COALESCE(su.job_posts_used, 0),
+            (
+              SELECT COUNT(*) 
+              FROM job_post jp 
+              WHERE (jp.user_id = rs.recruiter_id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = rs.recruiter_id))
+            )
+          ) AS job_posts_used,
           COALESCE(su.resume_views_used, 0) AS resume_views_used,
           COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
           COALESCE(su.featured_jobs_used, 0) AS featured_jobs_used,
@@ -277,10 +293,12 @@ const SubscriptionPlanModel = {
           (
             SELECT COUNT(*) 
             FROM job_post jp 
-            WHERE jp.user_id = rs.recruiter_id AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
+            WHERE (jp.user_id = rs.recruiter_id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = rs.recruiter_id))
+              AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
           ) AS active_jobs_count
         FROM recruiter_subscriptions rs
         INNER JOIN users u ON rs.recruiter_id = u.id
+        LEFT JOIN subscription_plans sp ON rs.plan_id = sp.id
         LEFT JOIN hr_profiles hp ON rs.company_id = hp.id OR rs.recruiter_id = hp.user_id
         LEFT JOIN subscription_usage su ON rs.id = su.subscription_id
         WHERE rs.plan_id = ?

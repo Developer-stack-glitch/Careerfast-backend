@@ -66,7 +66,14 @@ const RecruiterSubscriptionController = {
           sp.company_branding,
 
           /* Usage */
-          COALESCE(su.job_posts_used, 0) AS job_posts_used,
+          GREATEST(
+            COALESCE(su.job_posts_used, 0),
+            (
+              SELECT COUNT(*) 
+              FROM job_post jp 
+              WHERE (jp.user_id = rs.recruiter_id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = rs.recruiter_id))
+            )
+          ) AS job_posts_used,
           COALESCE(su.resume_views_used, 0) AS resume_views_used,
           COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
           COALESCE(su.featured_jobs_used, 0) AS featured_jobs_used,
@@ -76,7 +83,7 @@ const RecruiterSubscriptionController = {
           (
             SELECT COUNT(*) 
             FROM job_post jp 
-            WHERE jp.user_id = rs.recruiter_id 
+            WHERE (jp.user_id = rs.recruiter_id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = rs.recruiter_id))
               AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
               AND jp.approval_status = 'approved'
           ) AS active_jobs_count,
@@ -84,7 +91,7 @@ const RecruiterSubscriptionController = {
           (
             SELECT COUNT(*) 
             FROM job_post jp 
-            WHERE jp.user_id = rs.recruiter_id 
+            WHERE (jp.user_id = rs.recruiter_id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = rs.recruiter_id))
               AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
               AND (jp.approval_status = 'pending' OR jp.approval_status IS NULL)
           ) AS pending_jobs_count,

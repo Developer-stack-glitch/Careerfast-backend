@@ -54,7 +54,14 @@ const RecruiterManagementModel = {
           COALESCE(sp.sub_recruiter_limit, 1) AS sub_recruiter_limit,
 
           /* Real-time Usage */
-          COALESCE(su.job_posts_used, 0) AS job_posts_used,
+          GREATEST(
+            COALESCE(su.job_posts_used, 0),
+            (
+              SELECT COUNT(*) 
+              FROM job_post jp 
+              WHERE (jp.user_id = u.id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = u.id))
+            )
+          ) AS job_posts_used,
           COALESCE(su.resume_views_used, 0) AS resume_views_used,
           COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
           COALESCE(su.featured_jobs_used, 0) AS featured_jobs_used,
@@ -67,7 +74,8 @@ const RecruiterManagementModel = {
           (
             SELECT COUNT(*) 
             FROM job_post jp 
-            WHERE jp.user_id = u.id AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
+            WHERE (jp.user_id = u.id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = u.id))
+              AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
           ) AS active_jobs_count
 
         FROM users u
@@ -196,7 +204,14 @@ const RecruiterManagementModel = {
           COALESCE(sp.company_branding, 0) AS company_branding,
 
           /* Usage counters */
-          COALESCE(su.job_posts_used, 0) AS job_posts_used,
+          GREATEST(
+            COALESCE(su.job_posts_used, 0),
+            (
+              SELECT COUNT(*) 
+              FROM job_post jp 
+              WHERE (jp.user_id = u.id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = u.id))
+            )
+          ) AS job_posts_used,
           COALESCE(su.resume_views_used, 0) AS resume_views_used,
           COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
           COALESCE(su.featured_jobs_used, 0) AS featured_jobs_used,
@@ -210,7 +225,8 @@ const RecruiterManagementModel = {
           (
             SELECT COUNT(*) 
             FROM job_post jp 
-            WHERE jp.user_id = u.id AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
+            WHERE (jp.user_id = u.id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = u.id))
+              AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
           ) AS active_jobs_count
 
         FROM users u
@@ -816,15 +832,32 @@ const RecruiterManagementModel = {
           sp.slug AS plan_slug,
           sp.price AS plan_price,
           sp.job_post_limit,
+          sp.active_job_limit,
           sp.resume_view_limit,
+          sp.resume_download_limit,
+          sp.sub_recruiter_limit,
 
           CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS recruiter_name,
           u.email AS recruiter_email,
           u.phone AS recruiter_phone,
           COALESCE(hp.company_name, u.organization, 'Company') AS company_name,
           
-          COALESCE(su.job_posts_used, 0) AS job_posts_used,
+          GREATEST(
+            COALESCE(su.job_posts_used, 0),
+            (
+              SELECT COUNT(*) 
+              FROM job_post jp 
+              WHERE (jp.user_id = rs.recruiter_id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = rs.recruiter_id))
+            )
+          ) AS job_posts_used,
           COALESCE(su.resume_views_used, 0) AS resume_views_used,
+          COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
+          (
+            SELECT COUNT(*) 
+            FROM job_post jp 
+            WHERE (jp.user_id = rs.recruiter_id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = rs.recruiter_id))
+              AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
+          ) AS active_jobs_count,
           DATEDIFF(rs.expiry_date, NOW()) AS days_remaining
         FROM recruiter_subscriptions rs
         INNER JOIN users u ON rs.recruiter_id = u.id
