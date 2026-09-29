@@ -720,6 +720,108 @@ const updateUserStatus = async (request, response) => {
   }
 };
 
+const getProfileImage = async (request, response) => {
+  try {
+    const userId = request.params.id;
+    if (!userId) return response.status(400).send("User ID required");
+
+    const [rows] = await pool.query(
+      "SELECT profile_image FROM users WHERE id = ? LIMIT 1",
+      [userId]
+    );
+
+    if (rows.length === 0 || !rows[0].profile_image) {
+      return response.status(404).send("Image not found");
+    }
+
+    const imgData = rows[0].profile_image.trim();
+    if (imgData.startsWith("data:")) {
+      const matches = imgData.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        const mimeType = matches[1];
+        const buffer = Buffer.from(matches[2], "base64");
+        response.set({
+          "Content-Type": mimeType,
+          "Content-Length": buffer.length,
+          "Cache-Control": "public, max-age=86400, immutable",
+        });
+        return response.send(buffer);
+      }
+    } else if (imgData.startsWith("http://") || imgData.startsWith("https://") || imgData.startsWith("/")) {
+      return response.redirect(imgData);
+    }
+
+    try {
+      const buffer = Buffer.from(imgData, "base64");
+      response.set({
+        "Content-Type": "image/jpeg",
+        "Content-Length": buffer.length,
+        "Cache-Control": "public, max-age=86400, immutable",
+      });
+      return response.send(buffer);
+    } catch {
+      return response.status(404).send("Invalid image format");
+    }
+  } catch (error) {
+    console.error("Error in getProfileImage:", error);
+    return response.status(500).send("Error fetching profile image");
+  }
+};
+
+const getResume = async (request, response) => {
+  try {
+    const userId = request.params.id;
+    if (!userId) return response.status(400).send("User ID required");
+
+    const [rows] = await pool.query(
+      "SELECT resume, first_name, last_name FROM users WHERE id = ? LIMIT 1",
+      [userId]
+    );
+
+    if (rows.length === 0 || !rows[0].resume) {
+      return response.status(404).send("Resume not found");
+    }
+
+    const resumeData = rows[0].resume.trim();
+    const candidateName = `${rows[0].first_name || "Candidate"}_${rows[0].last_name || ""}`
+      .trim()
+      .replace(/[^a-zA-Z0-9_\-]/g, "_");
+
+    if (resumeData.startsWith("data:")) {
+      const matches = resumeData.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        const mimeType = matches[1] || "application/pdf";
+        const buffer = Buffer.from(matches[2], "base64");
+        response.set({
+          "Content-Type": mimeType,
+          "Content-Length": buffer.length,
+          "Content-Disposition": `inline; filename="${candidateName}_Resume.pdf"`,
+          "Cache-Control": "public, max-age=86400, immutable",
+        });
+        return response.send(buffer);
+      }
+    } else if (resumeData.startsWith("http://") || resumeData.startsWith("https://") || resumeData.startsWith("/")) {
+      return response.redirect(resumeData);
+    }
+
+    try {
+      const buffer = Buffer.from(resumeData, "base64");
+      response.set({
+        "Content-Type": "application/pdf",
+        "Content-Length": buffer.length,
+        "Content-Disposition": `inline; filename="${candidateName}_Resume.pdf"`,
+        "Cache-Control": "public, max-age=86400, immutable",
+      });
+      return response.send(buffer);
+    } catch {
+      return response.status(404).send("Invalid resume format");
+    }
+  } catch (error) {
+    console.error("Error in getResume:", error);
+    return response.status(500).send("Error fetching resume");
+  }
+};
+
 module.exports = {
   getUsers,
   createUser,
@@ -743,4 +845,6 @@ module.exports = {
   updateProfileImage,
   updateBanner,
   updateUserStatus,
+  getProfileImage,
+  getResume,
 };

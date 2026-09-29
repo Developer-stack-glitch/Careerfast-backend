@@ -392,7 +392,18 @@ const CandidateSearchModel = {
 
       const candidateColumns = `
         u.id, u.role_id, u.first_name, u.last_name, u.phone_code, u.phone,
-        u.email, u.gender, u.is_email_verified, u.profile_image, u.resume,
+        u.email, u.gender, u.is_email_verified,
+        (CASE 
+          WHEN u.profile_image IS NULL OR u.profile_image = '' OR u.profile_image = 'null' THEN NULL 
+          WHEN u.profile_image LIKE 'http%' OR (LENGTH(u.profile_image) < 255 AND u.profile_image NOT LIKE 'data:%') THEN u.profile_image 
+          ELSE CONCAT('/api/users/profile-image/', u.id) 
+        END) as profile_image,
+        (CASE 
+          WHEN u.resume IS NULL OR u.resume = '' OR u.resume = 'null' THEN NULL 
+          WHEN u.resume LIKE 'http%' OR (LENGTH(u.resume) < 255 AND u.resume NOT LIKE 'data:%') THEN u.resume 
+          ELSE CONCAT('/api/users/resume/', u.id) 
+        END) as resume,
+        (u.resume IS NOT NULL AND u.resume != '' AND u.resume != 'null') as has_resume,
         u.about, u.skills, u.organization, u.user_type, u.class, u.course,
         u.start_year, u.end_year, u.experince_type, u.total_years, u.total_months,
         u.location, u.organization_type_id, u.is_active, u.created_date,

@@ -329,6 +329,8 @@ router.use("/courses", courseRoutes);
 router.get("/candidates/search", CandidateSearchController.searchCandidates);
 router.get("/candidates/filter-options", CandidateSearchController.getFilterOptions);
 router.get("/candidates/companies-lookup", CandidateSearchController.lookupCompanies);
+router.get("/users/profile-image/:id", userController.getProfileImage);
+router.get("/users/resume/:id", userController.getResume);
 // Candidate Folders
 router.get("/candidates/folders", verifyToken, CandidateSearchController.getFolders);
 router.post("/candidates/folders", verifyToken, CandidateSearchController.createFolder);
