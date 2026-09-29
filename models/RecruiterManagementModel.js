@@ -29,7 +29,12 @@ const RecruiterManagementModel = {
           hp.website_url,
           hp.industry_type,
           hp.organization_type,
-          hp.profile_image AS company_logo,
+          COALESCE(
+            NULLIF(hp.profile_image, ''),
+            NULLIF(u.profile_image, ''),
+            (SELECT jp.company_logo FROM job_post jp WHERE jp.user_id = u.id AND jp.company_logo IS NOT NULL AND jp.company_logo != '' AND jp.company_logo NOT LIKE '%dummy_img%' ORDER BY jp.id DESC LIMIT 1)
+          ) AS company_logo,
+          COALESCE(NULLIF(u.profile_image, ''), NULLIF(hp.profile_image, '')) AS user_avatar,
           hp.gst_number,
 
           rs.id AS subscription_id,
@@ -159,7 +164,11 @@ const RecruiterManagementModel = {
           hp.year_established,
           hp.contact_phone AS company_phone,
           hp.contact_email AS company_email,
-          hp.profile_image AS company_logo,
+          COALESCE(
+            NULLIF(hp.profile_image, ''),
+            NULLIF(u.profile_image, ''),
+            (SELECT jp.company_logo FROM job_post jp WHERE jp.user_id = u.id AND jp.company_logo IS NOT NULL AND jp.company_logo != '' AND jp.company_logo NOT LIKE '%dummy_img%' ORDER BY jp.id DESC LIMIT 1)
+          ) AS company_logo,
           hp.gst_number,
 
           ua.address1,
@@ -841,6 +850,13 @@ const RecruiterManagementModel = {
           u.email AS recruiter_email,
           u.phone AS recruiter_phone,
           COALESCE(hp.company_name, u.organization, 'Company') AS company_name,
+          COALESCE(
+            NULLIF(hp.profile_image, ''),
+            NULLIF(u.profile_image, ''),
+            (SELECT jp.company_logo FROM job_post jp WHERE jp.user_id = rs.recruiter_id AND jp.company_logo IS NOT NULL AND jp.company_logo != '' AND jp.company_logo NOT LIKE '%dummy_img%' ORDER BY jp.id DESC LIMIT 1)
+          ) AS company_logo,
+          COALESCE(NULLIF(u.profile_image, ''), NULLIF(hp.profile_image, '')) AS profile_image,
+          COALESCE(NULLIF(u.profile_image, ''), NULLIF(hp.profile_image, '')) AS user_avatar,
           
           GREATEST(
             COALESCE(su.job_posts_used, 0),
