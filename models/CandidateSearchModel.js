@@ -372,17 +372,8 @@ const CandidateSearchModel = {
         orderByClause = " ORDER BY (CASE WHEN u.total_years IS NULL OR u.total_years = '' OR u.experince_type = 'Fresher' THEN 0 ELSE CAST(u.total_years AS UNSIGNED) END) ASC, u.id ASC";
       } else if (sortBy === "Newest" || sortBy === "Newest First") {
         orderByClause = " ORDER BY u.created_date DESC, u.id DESC";
-      } else if (sortBy === "Relevance") {
-        if (searchTerms.length > 0) {
-          const boostClauses = searchTerms.map(() => `(CASE WHEN u.skills LIKE ? OR u.about LIKE ? OR CONCAT(u.first_name, ' ', u.last_name) LIKE ? THEN 1 ELSE 0 END)`);
-          orderByClause = ` ORDER BY (${boostClauses.join(' + ')}) DESC, COALESCE(u.last_active, u.updated_date, u.created_date) DESC, u.id DESC`;
-          searchTerms.forEach(term => {
-            const p = `%${term}%`;
-            dataQueryParams.push(p, p, p);
-          });
-        } else {
-          orderByClause = " ORDER BY COALESCE(u.last_active, u.updated_date, u.created_date) DESC, u.id DESC";
-        }
+      } else if (sortBy === "Relevance" || !sortBy) {
+        orderByClause = " ORDER BY COALESCE(u.last_active, u.updated_date, u.created_date) DESC, u.id DESC";
       }
 
       // Pagination
@@ -395,12 +386,12 @@ const CandidateSearchModel = {
         u.email, u.gender, u.is_email_verified,
         (CASE 
           WHEN u.profile_image IS NULL OR u.profile_image = '' OR u.profile_image = 'null' THEN NULL 
-          WHEN u.profile_image LIKE 'http%' OR (LENGTH(u.profile_image) < 255 AND u.profile_image NOT LIKE 'data:%') THEN u.profile_image 
+          WHEN u.profile_image LIKE 'http%' OR u.profile_image LIKE '/uploads/%' THEN u.profile_image 
           ELSE CONCAT('/api/users/profile-image/', u.id) 
         END) as profile_image,
         (CASE 
           WHEN u.resume IS NULL OR u.resume = '' OR u.resume = 'null' THEN NULL 
-          WHEN u.resume LIKE 'http%' OR (LENGTH(u.resume) < 255 AND u.resume NOT LIKE 'data:%') THEN u.resume 
+          WHEN u.resume LIKE 'http%' OR u.resume LIKE '/uploads/%' THEN u.resume 
           ELSE CONCAT('/api/users/resume/', u.id) 
         END) as resume,
         (u.resume IS NOT NULL AND u.resume != '' AND u.resume != 'null') as has_resume,
