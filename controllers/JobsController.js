@@ -1356,6 +1356,22 @@ const getTrendingSearches = async (request, response) => {
   }
 };
 
+const getSearchSuggestions = async (request, response) => {
+  try {
+    const { q, type } = request.query;
+    const suggestions = await JobsModel.getSearchSuggestions(q, type);
+    response.status(200).send({
+      message: "Suggestions fetched successfully",
+      data: suggestions,
+    });
+  } catch (error) {
+    response.status(500).json({
+      message: "Error while fetching suggestions",
+      details: error.message,
+    });
+  }
+};
+
 const getUniqueCompanies = async (request, response) => {
   try {
     const companies = await JobsModel.getUniqueCompanies();
@@ -1366,6 +1382,22 @@ const getUniqueCompanies = async (request, response) => {
   } catch (error) {
     response.status(500).json({
       message: "Error while fetching companies",
+      details: error.message,
+    });
+  }
+};
+
+const getTopCompanies = async (request, response) => {
+  try {
+    const limit = parseInt(request.query.limit) || 12;
+    const companies = await JobsModel.getTopCompanies(limit);
+    response.status(200).send({
+      message: "Top companies fetched successfully",
+      data: companies,
+    });
+  } catch (error) {
+    response.status(500).json({
+      message: "Error while fetching top companies",
       details: error.message,
     });
   }
@@ -2212,7 +2244,9 @@ module.exports = {
   getAllAppliedCandidates,
   getHomePageStats,
   getTrendingSearches,
+  getSearchSuggestions,
   getUniqueCompanies,
+  getTopCompanies,
   getSuperAdminDashboardData,
   deleteTeamMember,
   getPendingJobs,
