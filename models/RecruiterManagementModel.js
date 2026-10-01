@@ -23,6 +23,7 @@ const RecruiterManagementModel = {
           CAST(u.is_active AS UNSIGNED) AS user_active,
           u.created_date AS recruiter_created_date,
           u.last_active,
+          u.auto_approve,
 
           hp.id AS company_id,
           COALESCE(hp.company_name, u.organization, 'Individual Recruiter') AS company_name,
@@ -117,6 +118,8 @@ const RecruiterManagementModel = {
           query += ` AND u.is_active = 1`;
         } else if (status === 'Suspended' || status === 'Disabled') {
           query += ` AND (u.is_active = 0 OR u.is_active IS NULL)`;
+        } else if (status === 'AutoApprove') {
+          query += ` AND u.auto_approve = 1`;
         }
       }
 
@@ -920,6 +923,15 @@ const RecruiterManagementModel = {
       `;
       const [rows] = await pool.query(query, [Number(limit)]);
       return rows;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  toggleAutoApprove: async (recruiterId, autoApprove) => {
+    try {
+      const query = `UPDATE users SET auto_approve = ? WHERE id = ?`;
+      await pool.query(query, [autoApprove ? 1 : 0, recruiterId]);
     } catch (error) {
       throw error;
     }

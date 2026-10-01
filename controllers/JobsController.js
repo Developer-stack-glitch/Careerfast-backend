@@ -432,8 +432,16 @@ const jobPosting = async (request, response) => {
       await SubRecruiterModel.incrementSubRecruiterUsage(recruiterUserId, 'job_post');
     }
 
+    // Auto Approve Logic
+    const [userRows] = await pool.query(`SELECT auto_approve, role_id FROM users WHERE id = ?`, [effectiveRecruiterId || user_id]);
+    const isAutoApprove = userRows[0]?.auto_approve === 1 || userRows[0]?.role_id === 1; // superadmins also auto-approve
+
+    if (isAutoApprove && result?.insertId) {
+      await pool.query(`UPDATE job_post SET approval_status = 'approved' WHERE id = ?`, [result.insertId]);
+    }
+
     return response.status(201).send({
-      message: "Job posted successfully. Waiting for admin approval.",
+      message: isAutoApprove ? "Job posted and auto-approved successfully." : "Job posted successfully. Waiting for admin approval.",
       data: result,
     });
   } catch (error) {
@@ -1904,13 +1912,14 @@ const getPendingJobs = async (request, response) => {
         try {
           if (!job.user_id) return job;
 
-          const [userRows] = await pool.query("SELECT role_id, full_name, email FROM users WHERE id = ?", [job.user_id]);
+          const [userRows] = await pool.query("SELECT role_id, first_name, last_name, email FROM users WHERE id = ?", [job.user_id]);
           const isSuperAdmin = userRows[0]?.role_id === 1;
+          const fullName = userRows[0] ? `${userRows[0].first_name || ''} ${userRows[0].last_name || ''}`.trim() : '';
 
           if (isSuperAdmin) {
             return {
               ...job,
-              recruiter_name: userRows[0]?.full_name || job.recruiter_name,
+              recruiter_name: fullName || job.recruiter_name,
               recruiter_email: userRows[0]?.email,
               recruiter_plan_name: 'Admin',
               recruiter_active_limit: 0,
@@ -1941,7 +1950,7 @@ const getPendingJobs = async (request, response) => {
 
           return {
             ...job,
-            recruiter_name: userRows[0]?.full_name || job.recruiter_name,
+            recruiter_name: fullName || job.recruiter_name,
             recruiter_email: userRows[0]?.email,
             recruiter_plan_name: planName,
             recruiter_active_limit: activeLimit,

@@ -59,6 +59,7 @@ router.post("/admin/recruiters/:id/change-plan", verifyToken, verifySuperAdmin, 
 router.post("/admin/recruiters/:id/extend-subscription", verifyToken, verifySuperAdmin, RecruiterManagementController.extendSubscription);
 router.put("/admin/recruiters/:id/status", verifyToken, verifySuperAdmin, RecruiterManagementController.updateRecruiterStatus);
 router.post("/admin/recruiters/:id/reset-password", verifyToken, verifySuperAdmin, RecruiterManagementController.resetPassword);
+router.put("/admin/recruiters/:id/auto-approve", verifyToken, verifySuperAdmin, RecruiterManagementController.toggleAutoApprove);
 router.get("/admin/subscriptions", verifyToken, verifySuperAdmin, RecruiterManagementController.getAllSubscriptions);
 router.get("/admin/audit-logs", verifyToken, verifySuperAdmin, RecruiterManagementController.getAuditLogs);
 

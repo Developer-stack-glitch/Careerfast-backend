@@ -187,6 +187,27 @@ const RecruiterManagementController = {
     }
   },
 
+  toggleAutoApprove: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { auto_approve } = req.body;
+      
+      await RecruiterManagementModel.toggleAutoApprove(id, auto_approve);
+
+      res.status(200).json({
+        success: true,
+        message: `Auto approve has been ${auto_approve ? 'enabled' : 'disabled'} for this recruiter.`
+      });
+    } catch (error) {
+      console.error("Error toggling auto approve:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to toggle auto approve.",
+        details: error.message
+      });
+    }
+  },
+
   getAllSubscriptions: async (req, res) => {
     try {
       const filters = {

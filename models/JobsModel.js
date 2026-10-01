@@ -953,6 +953,8 @@ const JobsModel = {
             SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) as pendingJobs,
             SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'rejected' THEN 1 ELSE 0 END) as rejectedJobs,
             SUM(CASE WHEN is_closed = 1 THEN 1 ELSE 0 END) as closedJobs,
+            SUM(CASE WHEN LOWER(job_nature) != 'internship' OR job_nature IS NULL THEN 1 ELSE 0 END) as jobsCount,
+            SUM(CASE WHEN LOWER(job_nature) = 'internship' THEN 1 ELSE 0 END) as internshipsCount,
             (SELECT COUNT(*) FROM applied_jobs) as totalApplications
           FROM job_post
         `;
@@ -963,6 +965,8 @@ const JobsModel = {
             SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) as pendingJobs,
             SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'rejected' THEN 1 ELSE 0 END) as rejectedJobs,
             SUM(CASE WHEN is_closed = 1 THEN 1 ELSE 0 END) as closedJobs,
+            SUM(CASE WHEN LOWER(job_nature) != 'internship' OR job_nature IS NULL THEN 1 ELSE 0 END) as jobsCount,
+            SUM(CASE WHEN LOWER(job_nature) = 'internship' THEN 1 ELSE 0 END) as internshipsCount,
             (SELECT COUNT(*) FROM applied_jobs aj JOIN job_post jp2 ON aj.postId = jp2.id WHERE jp2.user_id = ?) as totalApplications
           FROM job_post
           WHERE user_id = ?
@@ -975,6 +979,8 @@ const JobsModel = {
         pendingJobs: Number(statsResult[0]?.pendingJobs) || 0,
         rejectedJobs: Number(statsResult[0]?.rejectedJobs) || 0,
         closedJobs: Number(statsResult[0]?.closedJobs) || 0,
+        jobsCount: Number(statsResult[0]?.jobsCount) || 0,
+        internshipsCount: Number(statsResult[0]?.internshipsCount) || 0,
         totalApplications: Number(statsResult[0]?.totalApplications) || 0,
       };
 
