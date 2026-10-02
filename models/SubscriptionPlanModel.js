@@ -56,6 +56,9 @@ const SubscriptionPlanModel = {
         sub_recruiter_limit = 1,
         resume_view_limit = 50,
         resume_download_limit = 10,
+        email_limit = 50,
+        whatsapp_limit = 50,
+        excel_download_limit = 50,
         candidate_search = 0,
         candidate_contact = 0,
         resume_database = 0,
@@ -80,16 +83,16 @@ const SubscriptionPlanModel = {
         INSERT INTO subscription_plans (
           name, slug, description, plan_type, price, currency, validity_days,
           job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, sub_recruiter_limit,
-          resume_view_limit, resume_download_limit, candidate_search, candidate_contact, resume_database,
+          resume_view_limit, resume_download_limit, email_limit, whatsapp_limit, excel_download_limit, candidate_search, candidate_contact, resume_database,
           interview_management, application_management, shortlisting, company_profile, recruiter_dashboard, email_notifications, company_branding,
           status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       const values = [
         name, finalSlug, description, plan_type, price, currency, validity_days,
         job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, sub_recruiter_limit,
-        resume_view_limit, resume_download_limit,
+        resume_view_limit, resume_download_limit, email_limit, whatsapp_limit, excel_download_limit,
         candidate_search ? 1 : 0,
         candidate_contact ? 1 : 0,
         resume_database ? 1 : 0,
@@ -126,6 +129,9 @@ const SubscriptionPlanModel = {
         sub_recruiter_limit,
         resume_view_limit,
         resume_download_limit,
+        email_limit,
+        whatsapp_limit,
+        excel_download_limit,
         candidate_search,
         candidate_contact,
         resume_database,
@@ -154,6 +160,9 @@ const SubscriptionPlanModel = {
           sub_recruiter_limit = COALESCE(?, sub_recruiter_limit),
           resume_view_limit = COALESCE(?, resume_view_limit),
           resume_download_limit = COALESCE(?, resume_download_limit),
+          email_limit = COALESCE(?, email_limit),
+          whatsapp_limit = COALESCE(?, whatsapp_limit),
+          excel_download_limit = COALESCE(?, excel_download_limit),
           candidate_search = COALESCE(?, candidate_search),
           candidate_contact = COALESCE(?, candidate_contact),
           resume_database = COALESCE(?, resume_database),
@@ -171,7 +180,7 @@ const SubscriptionPlanModel = {
       const values = [
         name, description, plan_type, price, currency, validity_days,
         job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, sub_recruiter_limit,
-        resume_view_limit, resume_download_limit,
+        resume_view_limit, resume_download_limit, email_limit, whatsapp_limit, excel_download_limit,
         candidate_search !== undefined ? (candidate_search ? 1 : 0) : null,
         candidate_contact !== undefined ? (candidate_contact ? 1 : 0) : null,
         resume_database !== undefined ? (resume_database ? 1 : 0) : null,

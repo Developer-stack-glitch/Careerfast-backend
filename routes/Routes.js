@@ -57,6 +57,7 @@ router.get("/admin/recruiters/:id", verifyToken, verifySuperAdmin, RecruiterMana
 router.post("/admin/recruiters", verifyToken, verifySuperAdmin, RecruiterManagementController.createRecruiter);
 router.post("/admin/recruiters/:id/change-plan", verifyToken, verifySuperAdmin, RecruiterManagementController.changeRecruiterPlan);
 router.post("/admin/recruiters/:id/extend-subscription", verifyToken, verifySuperAdmin, RecruiterManagementController.extendSubscription);
+router.post("/admin/recruiters/:id/custom-plan", verifyToken, verifySuperAdmin, RecruiterManagementController.updateCustomPlan);
 router.put("/admin/recruiters/:id/status", verifyToken, verifySuperAdmin, RecruiterManagementController.updateRecruiterStatus);
 router.post("/admin/recruiters/:id/reset-password", verifyToken, verifySuperAdmin, RecruiterManagementController.resetPassword);
 router.put("/admin/recruiters/:id/auto-approve", verifyToken, verifySuperAdmin, RecruiterManagementController.toggleAutoApprove);
@@ -82,7 +83,9 @@ router.post("/admin/recruiters/:id/team", verifyToken, verifySuperAdmin, SubRecr
 router.get("/recruiter/my-subscription", verifyToken, RecruiterSubscriptionController.getMySubscription);
 router.post("/recruiter/subscription/consume-view", verifyToken, RecruiterSubscriptionController.consumeResumeView);
 router.post("/recruiter/subscription/consume-download", verifyToken, RecruiterSubscriptionController.consumeResumeDownload);
+router.post("/recruiter/subscription/consume-excel-download", verifyToken, RecruiterSubscriptionController.consumeExcelDownload);
 router.post("/recruiter/candidates/send-email", verifyToken, RecruiterSubscriptionController.sendCandidateEmail);
+router.post("/recruiter/candidates/record-whatsapp", verifyToken, RecruiterSubscriptionController.recordCandidateWhatsApp);
 
 // User module APIs
 router.get("/getUsers", userController.getUsers);

@@ -437,7 +437,7 @@ const jobPosting = async (request, response) => {
     const isAutoApprove = userRows[0]?.auto_approve === 1 || userRows[0]?.role_id === 1; // superadmins also auto-approve
 
     if (isAutoApprove && result?.insertId) {
-      await pool.query(`UPDATE job_post SET approval_status = 'approved' WHERE id = ?`, [result.insertId]);
+      await pool.query(`UPDATE job_post SET approval_status = 'approved', approved_at = NOW() WHERE id = ?`, [result.insertId]);
     }
 
     return response.status(201).send({
@@ -597,17 +597,39 @@ const getJobPosts = async (request, response) => {
   if (body.searchTerm) filters.searchTerm = body.searchTerm;
   if (Array.isArray(body.companies) && body.companies.length > 0) filters.companies = body.companies;
   if (body.is_closed !== undefined) filters.is_closed = body.is_closed;
+  if (body.include_stats !== undefined) filters.include_stats = body.include_stats;
+  if (body.admin_user_id) filters.admin_user_id = body.admin_user_id;
 
   // By default, public API should only return approved jobs
-  // Skip approval_status filter when previewing a specific job by ID
+  // Skip approval_status filter when previewing a specific job by ID, when approval_status is 'all', or when include_stats is true
   if (body.preview === true && body.id) {
     // Don't set approval_status filter - allow fetching any job by ID for preview
+  } else if (body.approval_status === 'all') {
+    delete filters.approval_status;
+  } else if (body.approval_status) {
+    filters.approval_status = body.approval_status;
+  } else if (body.include_stats || body.admin_user_id) {
+    delete filters.approval_status;
   } else {
-    filters.approval_status = body.approval_status || "approved";
+    filters.approval_status = "approved";
   }
+
+  // Sorting
+  if (body.sort_key) filters.sort_key = body.sort_key;
+  if (body.sort_direction) filters.sort_direction = body.sort_direction;
 
   try {
     const posts = await JobsModel.getJobPosts(filters);
+    if (posts && Array.isArray(posts.data)) {
+      posts.data = await batchEnrichJobsWithRecruiterInfo(posts.data);
+    } else if (Array.isArray(posts)) {
+      const enriched = await batchEnrichJobsWithRecruiterInfo(posts);
+      return response.status(200).send({
+        message: "Job posts fetched successfully",
+        data: enriched,
+      });
+    }
+
     response.status(200).send({
       message: "Job posts fetched successfully",
       data: posts,
@@ -622,7 +644,7 @@ const getJobPosts = async (request, response) => {
 };
 
 const registrationClose = async (request, response) => {
-  const { id } = request.body;
+  const id = request.body?.id || request.query?.id || request.params?.id;
   try {
     const result = await JobsModel.registrationClose(id);
     response.status(200).send({
@@ -636,6 +658,10 @@ const registrationClose = async (request, response) => {
     });
   }
 };
+
+
+
+
 
 const getExperienceRange = async (request, response) => {
   try {
@@ -1727,7 +1753,7 @@ const updateJobPosting = async (request, response) => {
 };
 
 const deleteJobPost = async (req, res) => {
-  const { id } = req.query;
+  const id = req.body?.id || req.query?.id || req.params?.id;
   try {
     const [jobRows] = await pool.query(`SELECT user_id FROM job_post WHERE id = ?`, [id]);
     const recruiterUserId = jobRows[0]?.user_id;
@@ -1895,74 +1921,93 @@ const updateJobStatus = async (req, res) => {
 };
 
 
+const batchEnrichJobsWithRecruiterInfo = async (rawList) => {
+  if (!Array.isArray(rawList) || rawList.length === 0) return rawList;
+  const userIds = [...new Set(rawList.map(j => j.user_id).filter(Boolean))];
+  if (userIds.length === 0) return rawList;
+
+  try {
+    const [userRows] = await pool.query(
+      "SELECT id, role_id, first_name, last_name, email FROM users WHERE id IN (?)",
+      [userIds]
+    );
+    const userMap = new Map(userRows.map(u => [u.id, u]));
+
+    const [subRows] = await pool.query(
+      `SELECT rs.recruiter_id, sp.name AS plan_name, sp.active_job_limit
+       FROM recruiter_subscriptions rs
+       JOIN subscription_plans sp ON rs.plan_id = sp.id
+       WHERE rs.recruiter_id IN (?)
+       ORDER BY rs.id ASC`,
+      [userIds]
+    );
+    const subMap = new Map(subRows.map(s => [s.recruiter_id, s]));
+
+    const [activeCountRows] = await pool.query(
+      `SELECT user_id, COUNT(*) AS count
+       FROM job_post
+       WHERE user_id IN (?) AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'
+       GROUP BY user_id`,
+      [userIds]
+    );
+    const countMap = new Map(activeCountRows.map(c => [c.user_id, c.count]));
+
+    return rawList.map(job => {
+      if (!job.user_id) return job;
+      const user = userMap.get(job.user_id);
+      const isSuperAdmin = user?.role_id === 1;
+      const fullName = user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() : '';
+
+      if (isSuperAdmin) {
+        return {
+          ...job,
+          recruiter_name: fullName || job.recruiter_name,
+          recruiter_email: user?.email,
+          recruiter_plan_name: 'Admin',
+          recruiter_active_limit: 0,
+          recruiter_active_count: 0,
+          recruiter_can_approve: true
+        };
+      }
+
+      const sub = subMap.get(job.user_id);
+      const planName = sub?.plan_name || 'Basic';
+      const activeLimit = sub?.active_job_limit !== undefined ? sub.active_job_limit : 3;
+      const activeCount = countMap.get(job.user_id) || 0;
+      const canApprove = activeLimit === 0 || activeCount < activeLimit;
+
+      return {
+        ...job,
+        recruiter_name: fullName || job.recruiter_name,
+        recruiter_email: user?.email,
+        recruiter_plan_name: planName,
+        recruiter_active_limit: activeLimit,
+        recruiter_active_count: activeCount,
+        recruiter_can_approve: canApprove
+      };
+    });
+  } catch (err) {
+    console.error("Error in batchEnrichJobsWithRecruiterInfo:", err);
+    return rawList;
+  }
+};
+
 const getPendingJobs = async (request, response) => {
-  const { limit, page } = request.query;
+  const { limit, page, search, start_date, end_date } = request.query;
   const filters = {
     limit: limit ? parseInt(limit) : 20,
     page: page ? parseInt(page) : 1,
     approval_status: 'pending'
   };
+  if (search) filters.searchTerm = search;
+  if (start_date) filters.start_date = start_date;
+  if (end_date) filters.end_date = end_date;
 
   try {
     const postsResult = await JobsModel.getJobPosts(filters);
     const rawList = postsResult?.data || (Array.isArray(postsResult) ? postsResult : []);
 
-    const enrichedList = await Promise.all(
-      rawList.map(async (job) => {
-        try {
-          if (!job.user_id) return job;
-
-          const [userRows] = await pool.query("SELECT role_id, first_name, last_name, email FROM users WHERE id = ?", [job.user_id]);
-          const isSuperAdmin = userRows[0]?.role_id === 1;
-          const fullName = userRows[0] ? `${userRows[0].first_name || ''} ${userRows[0].last_name || ''}`.trim() : '';
-
-          if (isSuperAdmin) {
-            return {
-              ...job,
-              recruiter_name: fullName || job.recruiter_name,
-              recruiter_email: userRows[0]?.email,
-              recruiter_plan_name: 'Admin',
-              recruiter_active_limit: 0,
-              recruiter_active_count: 0,
-              recruiter_can_approve: true
-            };
-          }
-
-          const [subRows] = await pool.query(
-            `SELECT sp.name AS plan_name, sp.active_job_limit
-             FROM recruiter_subscriptions rs
-             JOIN subscription_plans sp ON rs.plan_id = sp.id
-             WHERE rs.recruiter_id = ?
-             ORDER BY rs.id DESC LIMIT 1`,
-            [job.user_id]
-          );
-
-          const planName = subRows[0]?.plan_name || 'Basic';
-          const activeLimit = subRows[0]?.active_job_limit !== undefined ? subRows[0].active_job_limit : 3;
-
-          const [activeCountRows] = await pool.query(
-            `SELECT COUNT(*) AS count FROM job_post WHERE user_id = ? AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
-            [job.user_id]
-          );
-
-          const activeCount = activeCountRows[0]?.count || 0;
-          const canApprove = activeLimit === 0 || activeCount < activeLimit;
-
-          return {
-            ...job,
-            recruiter_name: fullName || job.recruiter_name,
-            recruiter_email: userRows[0]?.email,
-            recruiter_plan_name: planName,
-            recruiter_active_limit: activeLimit,
-            recruiter_active_count: activeCount,
-            recruiter_can_approve: canApprove
-          };
-        } catch (enrichErr) {
-          console.error("Error enriching job:", enrichErr);
-          return job;
-        }
-      })
-    );
+    const enrichedList = await batchEnrichJobsWithRecruiterInfo(rawList);
 
     if (postsResult && postsResult.data) {
       postsResult.data = enrichedList;
@@ -2262,4 +2307,6 @@ module.exports = {
   approveJob,
   rejectJob,
   approveAllJobs,
+  makeJobActive,
+  deleteJobPost,
 };

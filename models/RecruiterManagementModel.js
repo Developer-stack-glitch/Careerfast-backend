@@ -9,7 +9,9 @@ const RecruiterManagementModel = {
         planId = "",
         status = "",
         subscriptionStatus = "",
-        company = ""
+        company = "",
+        startDate = "",
+        endDate = ""
       } = filters;
 
       let query = `
@@ -58,6 +60,9 @@ const RecruiterManagementModel = {
           COALESCE(sp.featured_job_limit, 0) AS featured_job_limit,
           COALESCE(sp.urgent_job_limit, 0) AS urgent_job_limit,
           COALESCE(sp.sub_recruiter_limit, 1) AS sub_recruiter_limit,
+          COALESCE(sp.email_limit, 50) AS email_limit,
+          COALESCE(sp.whatsapp_limit, 50) AS whatsapp_limit,
+          COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
 
           /* Real-time Usage */
           GREATEST(
@@ -70,6 +75,11 @@ const RecruiterManagementModel = {
           ) AS job_posts_used,
           COALESCE(su.resume_views_used, 0) AS resume_views_used,
           COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
+          COALESCE(su.emails_sent, 0) AS emails_used,
+          COALESCE(su.emails_sent, 0) AS emails_sent,
+          COALESCE(su.whatsapp_messages_sent, 0) AS whatsapp_used,
+          COALESCE(su.whatsapp_messages_sent, 0) AS whatsapp_messages_sent,
+          COALESCE(su.excel_downloads_used, 0) AS excel_downloads_used,
           COALESCE(su.featured_jobs_used, 0) AS featured_jobs_used,
           COALESCE(su.urgent_jobs_used, 0) AS urgent_jobs_used,
           (
@@ -109,8 +119,12 @@ const RecruiterManagementModel = {
       }
 
       if (planId) {
-        query += ` AND rs.plan_id = ?`;
-        params.push(planId);
+        if (planId === 'custom') {
+          query += ` AND sp.plan_type = 'Custom'`;
+        } else {
+          query += ` AND rs.plan_id = ?`;
+          params.push(planId);
+        }
       }
 
       if (status) {
@@ -131,6 +145,17 @@ const RecruiterManagementModel = {
       if (company) {
         query += ` AND (hp.company_name LIKE ? OR u.organization LIKE ?)`;
         params.push(`%${company}%`, `%${company}%`);
+      }
+
+      if (startDate && endDate) {
+        query += ` AND DATE(u.created_date) BETWEEN ? AND ?`;
+        params.push(startDate, endDate);
+      } else if (startDate) {
+        query += ` AND DATE(u.created_date) >= ?`;
+        params.push(startDate);
+      } else if (endDate) {
+        query += ` AND DATE(u.created_date) <= ?`;
+        params.push(endDate);
       }
 
       query += ` ORDER BY u.id DESC`;
@@ -202,6 +227,9 @@ const RecruiterManagementModel = {
           COALESCE(sp.featured_job_limit, 0) AS featured_job_limit,
           COALESCE(sp.urgent_job_limit, 0) AS urgent_job_limit,
           COALESCE(sp.sub_recruiter_limit, 1) AS sub_recruiter_limit,
+          COALESCE(sp.email_limit, 50) AS email_limit,
+          COALESCE(sp.whatsapp_limit, 50) AS whatsapp_limit,
+          COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
 
           /* Feature Permissions */
           COALESCE(sp.candidate_search, 0) AS candidate_search,
@@ -226,6 +254,11 @@ const RecruiterManagementModel = {
           ) AS job_posts_used,
           COALESCE(su.resume_views_used, 0) AS resume_views_used,
           COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
+          COALESCE(su.emails_sent, 0) AS emails_used,
+          COALESCE(su.emails_sent, 0) AS emails_sent,
+          COALESCE(su.whatsapp_messages_sent, 0) AS whatsapp_used,
+          COALESCE(su.whatsapp_messages_sent, 0) AS whatsapp_messages_sent,
+          COALESCE(su.excel_downloads_used, 0) AS excel_downloads_used,
           COALESCE(su.featured_jobs_used, 0) AS featured_jobs_used,
           COALESCE(su.urgent_jobs_used, 0) AS urgent_jobs_used,
           COALESCE(su.candidate_contacts_used, 0) AS candidate_contacts_used,
@@ -336,9 +369,11 @@ const RecruiterManagementModel = {
         username,
         password,
 
-        // Subscription details
+      // Subscription details
         plan_id,
+        custom_limits, // added
         billing_cycle = 'monthly',
+
         start_date,
         expiry_date,
         payment_status = 'Paid',
@@ -355,14 +390,19 @@ const RecruiterManagementModel = {
       }
 
       // 2. Fetch Plan to calculate defaults & limits
-      const [planRows] = await connection.query(
-        `SELECT * FROM subscription_plans WHERE id = ?`,
-        [plan_id]
-      );
-      if (planRows.length === 0) {
-        throw new Error(`Selected subscription plan not found.`);
+      let plan = null;
+      if (plan_id === 'custom') {
+          plan = { id: 'custom', validity_days: 30, price: 0 };
+      } else {
+          const [planRows] = await connection.query(
+            `SELECT * FROM subscription_plans WHERE id = ?`,
+            [plan_id]
+          );
+          if (planRows.length === 0) {
+            throw new Error(`Selected subscription plan not found.`);
+          }
+          plan = planRows[0];
       }
-      const plan = planRows[0];
 
       // 3. Calculate start and expiry dates
       const startDateObj = start_date ? new Date(start_date) : new Date();
@@ -438,7 +478,33 @@ const RecruiterManagementModel = {
         `, [newUserId, address || '', city || '', state || '', country || 'India', pincode || '']);
       }
 
-      // 8. Create subscription in `recruiter_subscriptions`
+      // 8. Handle Custom Plan Creation
+      if (plan.id === 'custom') {
+          const customPlanName = `Custom Plan - User ${newUserId}`;
+          const customSlug = `custom-user-${newUserId}-${Date.now()}`;
+          const limits = custom_limits || {};
+          const insertPlanQuery = `
+            INSERT INTO subscription_plans (name, slug, description, plan_type, job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, resume_view_limit, resume_download_limit, sub_recruiter_limit, email_limit, whatsapp_limit, excel_download_limit, validity_days, price, status)
+            VALUES (?, ?, 'Custom plan configured by administrator', 'Custom', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30, 0, 1)
+          `;
+          const [planResult] = await connection.query(insertPlanQuery, [
+            customPlanName,
+            customSlug,
+            limits.job_post_limit || 0,
+            limits.active_job_limit || 0,
+            limits.featured_job_limit || 0,
+            limits.urgent_job_limit || 0,
+            limits.resume_view_limit || 0,
+            limits.resume_download_limit || 0,
+            limits.sub_recruiter_limit || 1,
+            limits.email_sent_count !== undefined ? (Number(limits.email_sent_count) || 0) : (Number(limits.email_limit) || 0),
+            limits.whatsapp_message_count !== undefined ? (Number(limits.whatsapp_message_count) || 0) : (limits.whatsapp_sent_count !== undefined ? (Number(limits.whatsapp_sent_count) || 0) : (Number(limits.whatsapp_limit) || 0)),
+            limits.excel_download_count !== undefined ? (Number(limits.excel_download_count) || 0) : (limits.excel_downloads_limit !== undefined ? (Number(limits.excel_downloads_limit) || 0) : (Number(limits.excel_download_limit) || 0))
+          ]);
+          plan.id = planResult.insertId;
+      }
+
+      // 9. Create subscription in `recruiter_subscriptions`
       const pricePaid = billing_cycle === 'yearly' ? (plan.price * 12) : plan.price;
       const insertSubQuery = `
         INSERT INTO recruiter_subscriptions (
@@ -776,6 +842,111 @@ const RecruiterManagementModel = {
     } catch (error) {
       await connection.rollback();
       throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
+  updateCustomPlan: async (recruiterId, limits, adminId) => {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      // 1. Get current subscription
+      const [subRows] = await connection.query(
+        `SELECT rs.*, sp.plan_type, sp.name AS plan_name 
+         FROM recruiter_subscriptions rs
+         LEFT JOIN subscription_plans sp ON rs.plan_id = sp.id
+         WHERE rs.recruiter_id = ? ORDER BY rs.id DESC LIMIT 1`,
+        [recruiterId]
+      );
+
+      if (subRows.length === 0) {
+        throw new Error("No active subscription found for this recruiter.");
+      }
+      const currentSub = subRows[0];
+      const customPlanName = `Custom Plan - User ${recruiterId}`;
+      const customSlug = `custom-user-${recruiterId}-${Date.now()}`;
+
+      let customPlanId;
+
+      if (currentSub.plan_type === 'Custom' && currentSub.plan_id) {
+        // Update the existing custom plan limits
+        await connection.query(
+          `UPDATE subscription_plans SET 
+            job_post_limit = ?,
+            active_job_limit = ?,
+            featured_job_limit = ?,
+            urgent_job_limit = ?,
+            resume_view_limit = ?,
+            resume_download_limit = ?,
+            sub_recruiter_limit = ?,
+            email_limit = ?,
+            whatsapp_limit = ?,
+            excel_download_limit = ?
+           WHERE id = ?`,
+          [
+            limits.job_post_limit || 0,
+            limits.active_job_limit || 0,
+            limits.featured_job_limit || 0,
+            limits.urgent_job_limit || 0,
+            limits.resume_view_limit || 0,
+            limits.resume_download_limit || 0,
+            limits.sub_recruiter_limit || 1,
+            limits.email_sent_count !== undefined ? (Number(limits.email_sent_count) || 0) : (Number(limits.email_limit) || 0),
+            limits.whatsapp_message_count !== undefined ? (Number(limits.whatsapp_message_count) || 0) : (limits.whatsapp_sent_count !== undefined ? (Number(limits.whatsapp_sent_count) || 0) : (Number(limits.whatsapp_limit) || 0)),
+            limits.excel_download_count !== undefined ? (Number(limits.excel_download_count) || 0) : (limits.excel_downloads_limit !== undefined ? (Number(limits.excel_downloads_limit) || 0) : (Number(limits.excel_download_limit) || 0)),
+            currentSub.plan_id
+          ]
+        );
+        customPlanId = currentSub.plan_id;
+      } else {
+        // 2. We will create a new 'Custom' plan in subscription_plans with unique slug
+        const insertPlanQuery = `
+          INSERT INTO subscription_plans (name, slug, description, plan_type, job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, resume_view_limit, resume_download_limit, sub_recruiter_limit, email_limit, whatsapp_limit, excel_download_limit, validity_days, price, status)
+          VALUES (?, ?, 'Custom plan configured by administrator', 'Custom', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30, 0, 1)
+        `;
+        
+        const [planResult] = await connection.query(insertPlanQuery, [
+          customPlanName,
+          customSlug,
+          limits.job_post_limit || 0,
+          limits.active_job_limit || 0,
+          limits.featured_job_limit || 0,
+          limits.urgent_job_limit || 0,
+          limits.resume_view_limit || 0,
+          limits.resume_download_limit || 0,
+          limits.sub_recruiter_limit || 1,
+          limits.email_sent_count !== undefined ? (Number(limits.email_sent_count) || 0) : (Number(limits.email_limit) || 0),
+          limits.whatsapp_message_count !== undefined ? (Number(limits.whatsapp_message_count) || 0) : (limits.whatsapp_sent_count !== undefined ? (Number(limits.whatsapp_sent_count) || 0) : (Number(limits.whatsapp_limit) || 0)),
+          limits.excel_download_count !== undefined ? (Number(limits.excel_download_count) || 0) : (limits.excel_downloads_limit !== undefined ? (Number(limits.excel_downloads_limit) || 0) : (Number(limits.excel_download_limit) || 0))
+        ]);
+        customPlanId = planResult.insertId;
+
+        // 3. Point recruiter's subscription to this custom plan
+        await connection.query(
+          `UPDATE recruiter_subscriptions SET plan_id = ? WHERE id = ?`,
+          [customPlanId, currentSub.id]
+        );
+      }
+
+      // 4. Log the action
+      await connection.query(
+        `INSERT INTO admin_audit_logs (admin_id, action, target_type, target_id, old_value, new_value)
+         VALUES (?, 'Admin Custom Plan Set', 'recruiter', ?, ?, ?)`,
+        [
+          adminId, 
+          String(recruiterId),
+          JSON.stringify({ old_plan_id: currentSub.plan_id }),
+          JSON.stringify({ new_plan_id: customPlanId, limits })
+        ]
+      );
+
+      await connection.commit();
+      return { message: "Custom plan limits applied successfully." };
+    } catch(err) {
+      await connection.rollback();
+      throw err;
     } finally {
       connection.release();
     }

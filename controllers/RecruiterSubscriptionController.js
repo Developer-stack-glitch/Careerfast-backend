@@ -50,6 +50,9 @@ const RecruiterSubscriptionController = {
           sp.active_job_limit,
           sp.resume_view_limit,
           sp.resume_download_limit,
+          COALESCE(sp.email_limit, 50) AS email_limit,
+          COALESCE(sp.whatsapp_limit, 50) AS whatsapp_limit,
+          COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
           sp.featured_job_limit,
           sp.urgent_job_limit,
 
@@ -76,6 +79,9 @@ const RecruiterSubscriptionController = {
           ) AS job_posts_used,
           COALESCE(su.resume_views_used, 0) AS resume_views_used,
           COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
+          COALESCE(su.emails_sent, 0) AS emails_sent,
+          COALESCE(su.whatsapp_messages_sent, 0) AS whatsapp_messages_sent,
+          COALESCE(su.excel_downloads_used, 0) AS excel_downloads_used,
           COALESCE(su.featured_jobs_used, 0) AS featured_jobs_used,
           COALESCE(su.urgent_jobs_used, 0) AS urgent_jobs_used,
           COALESCE(su.candidate_contacts_used, 0) AS candidate_contacts_used,
@@ -256,6 +262,10 @@ const RecruiterSubscriptionController = {
         resume_views_limit: sub.resume_view_limit,
         resume_download_limit: sub.resume_download_limit,
         resume_downloads_limit: sub.resume_download_limit,
+        email_limit: sub.email_limit ?? 50,
+        whatsapp_limit: sub.whatsapp_limit ?? 50,
+        excel_download_limit: sub.excel_download_limit ?? 50,
+        excel_downloads_limit: sub.excel_download_limit ?? 50,
         featured_job_limit: sub.featured_job_limit,
         urgent_job_limit: sub.urgent_job_limit
       };
@@ -274,6 +284,16 @@ const RecruiterSubscriptionController = {
         resume_downloads_used: sub.resume_downloads_used,
         resume_downloads_limit: sub.resume_download_limit,
         resume_downloads_remaining: Math.max(0, sub.resume_download_limit - sub.resume_downloads_used),
+        emails_sent: sub.emails_sent || 0,
+        email_limit: sub.email_limit ?? 50,
+        emails_remaining: Math.max(0, (sub.email_limit ?? 50) - (sub.emails_sent || 0)),
+        whatsapp_messages_sent: sub.whatsapp_messages_sent || 0,
+        whatsapp_limit: sub.whatsapp_limit ?? 50,
+        whatsapp_remaining: Math.max(0, (sub.whatsapp_limit ?? 50) - (sub.whatsapp_messages_sent || 0)),
+        excel_downloads_used: sub.excel_downloads_used || 0,
+        excel_download_limit: sub.excel_download_limit ?? 50,
+        excel_downloads_limit: sub.excel_download_limit ?? 50,
+        excel_downloads_remaining: Math.max(0, (sub.excel_download_limit ?? 50) - (sub.excel_downloads_used || 0)),
         featured_jobs_used: sub.featured_jobs_used,
         featured_job_limit: sub.featured_job_limit,
         featured_jobs_remaining: Math.max(0, sub.featured_job_limit - sub.featured_jobs_used),
@@ -861,7 +881,7 @@ const RecruiterSubscriptionController = {
         }
       }
 
-      // Record candidate contact usage if subscription exists
+      // Record candidate contact usage & email counts if subscription exists
       try {
         const [subRow] = await pool.query(
           `SELECT id FROM recruiter_subscriptions WHERE recruiter_id = ? ORDER BY id DESC LIMIT 1`,
@@ -869,12 +889,23 @@ const RecruiterSubscriptionController = {
         );
         if (subRow.length > 0 && sentCount > 0) {
           await pool.query(
-            `UPDATE subscription_usage SET candidate_contacts_used = candidate_contacts_used + ? WHERE subscription_id = ?`,
-            [sentCount, subRow[0].id]
+            `UPDATE subscription_usage 
+             SET candidate_contacts_used = candidate_contacts_used + ?,
+                 emails_sent = emails_sent + ? 
+             WHERE subscription_id = ?`,
+            [sentCount, sentCount, subRow[0].id]
+          );
+        }
+        if (sentCount > 0) {
+          await pool.query(
+            `INSERT INTO hr_credits_breakdown (recruiter_id, email_count) 
+             VALUES (?, ?) 
+             ON DUPLICATE KEY UPDATE email_count = email_count + ?`,
+            [recruiterId, sentCount, sentCount]
           );
         }
       } catch (usageErr) {
-        console.warn("Could not update candidate_contacts_used:", usageErr.message);
+        console.warn("Could not update email usage:", usageErr.message);
       }
 
       if (sentCount === 0 && failedCount > 0) {
@@ -898,6 +929,204 @@ const RecruiterSubscriptionController = {
         message: "Failed to send email to candidate.",
         details: error.message
       });
+    }
+  },
+
+  consumeExcelDownload: async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
+
+      const count = Math.max(1, parseInt(req.body?.count || 1, 10));
+      const candidateIds = Array.isArray(req.body?.candidate_ids) ? req.body.candidate_ids : (Array.isArray(req.body?.candidateIds) ? req.body.candidateIds : []);
+      const recruiterId = await getEffectiveRecruiterId(userId);
+
+      const query = `
+        SELECT 
+          rs.id AS subscription_id,
+          rs.recruiter_id,
+          rs.expiry_date,
+          rs.status AS subscription_status,
+          sp.name AS plan_name,
+          COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
+          su.id AS usage_id,
+          COALESCE(su.excel_downloads_used, 0) AS excel_downloads_used
+        FROM recruiter_subscriptions rs
+        INNER JOIN subscription_plans sp ON rs.plan_id = sp.id
+        LEFT JOIN subscription_usage su ON rs.id = su.subscription_id
+        WHERE rs.recruiter_id = ?
+        ORDER BY rs.id DESC
+        LIMIT 1
+      `;
+      const [rows] = await pool.query(query, [recruiterId]);
+
+      if (rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          limit_reached: true,
+          message: "No Active Subscription",
+          details: "You do not have an active subscription. Please subscribe to a plan to export candidates to Excel."
+        });
+      }
+
+      const sub = rows[0];
+      const isExpired = new Date(sub.expiry_date) < new Date() || sub.subscription_status === 'Expired';
+      if (isExpired) {
+        return res.status(403).json({
+          success: false,
+          limit_reached: true,
+          message: "Subscription Expired",
+          details: "Your subscription plan has expired. Please upgrade or renew your plan to export candidate data."
+        });
+      }
+
+      if (sub.subscription_status === 'Suspended') {
+        return res.status(403).json({
+          success: false,
+          limit_reached: true,
+          message: "Account Suspended",
+          details: "Your recruiter account is currently suspended. Please contact support."
+        });
+      }
+
+      const currentUsed = Number(sub.excel_downloads_used || 0);
+      const limit = Number(sub.excel_download_limit || 50);
+      const remainingBefore = Math.max(0, limit - currentUsed);
+
+      if (currentUsed + count > limit) {
+        return res.status(403).json({
+          success: false,
+          limit_reached: true,
+          message: "Excel Download Quota Exceeded",
+          details: `You selected ${count} candidates, but have only ${remainingBefore} Excel downloads left in your ${sub.plan_name} Plan. Please upgrade your plan.`,
+          limit: limit,
+          used: currentUsed,
+          remaining: remainingBefore
+        });
+      }
+
+      // Record in subscription_usage
+      if (sub.usage_id) {
+        await pool.query(
+          `UPDATE subscription_usage SET excel_downloads_used = excel_downloads_used + ? WHERE id = ?`,
+          [count, sub.usage_id]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO subscription_usage (subscription_id, recruiter_id, excel_downloads_used) VALUES (?, ?, ?)`,
+          [sub.subscription_id, recruiterId, count]
+        );
+      }
+
+      // Sync hr_credits_breakdown
+      try {
+        await pool.query(
+          `INSERT INTO hr_credits_breakdown (recruiter_id, excel_downloads)
+           VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE excel_downloads = excel_downloads + ?`,
+          [recruiterId, count, count]
+        );
+      } catch (hbErr) {
+        console.warn("Could not sync hr_credits_breakdown for excel_downloads:", hbErr.message);
+      }
+
+      const updatedUsed = currentUsed + count;
+      const updatedRemaining = Math.max(0, limit - updatedUsed);
+
+      return res.status(200).json({
+        success: true,
+        message: `Successfully processed ${count} candidate Excel export(s).`,
+        consumed_count: count,
+        limit: limit,
+        used: updatedUsed,
+        remaining: updatedRemaining
+      });
+    } catch (error) {
+      console.error("Error consuming Excel download:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to process Excel download.",
+        details: error.message
+      });
+    }
+  },
+
+  recordCandidateWhatsApp: async (req, res) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
+
+      const count = Math.max(1, parseInt(req.body.count || 1, 10));
+      const recruiterId = await getEffectiveRecruiterId(userId);
+
+      const [subRows] = await pool.query(
+        `SELECT sp.candidate_contact, sp.whatsapp_limit, rs.id as sub_id, rs.status, rs.expiry_date
+         FROM recruiter_subscriptions rs
+         JOIN subscription_plans sp ON rs.plan_id = sp.id
+         WHERE rs.recruiter_id = ?
+         ORDER BY rs.id DESC LIMIT 1`,
+        [recruiterId]
+      );
+
+      if (subRows.length > 0) {
+        const sub = subRows[0];
+        const isExpired = new Date(sub.expiry_date) < new Date() || sub.status === 'Expired';
+        if (sub.candidate_contact === 0 || isExpired) {
+          return res.status(403).json({
+            success: false,
+            message: "Direct candidate contact is not included in your subscription plan. Please upgrade your plan."
+          });
+        }
+        
+        const whatsappLimit = sub.whatsapp_limit || 0;
+        if (whatsappLimit > 0) {
+          const [usageRows] = await pool.query(
+            `SELECT whatsapp_count FROM hr_credits_breakdown WHERE recruiter_id = ? LIMIT 1`,
+            [recruiterId]
+          );
+          const currentWaCount = usageRows[0]?.whatsapp_count || 0;
+          if (currentWaCount + count > whatsappLimit) {
+            return res.status(403).json({
+              success: false,
+              message: `WhatsApp quota exceeded. Your plan allows up to ${whatsappLimit} messages (${currentWaCount} already sent). Please upgrade your plan.`
+            });
+          }
+        }
+      }
+
+      // Increment counts in subscription_usage & hr_credits_breakdown
+      try {
+        const subId = subRows[0]?.sub_id;
+        if (subId) {
+          await pool.query(
+            `UPDATE subscription_usage 
+             SET candidate_contacts_used = candidate_contacts_used + ?,
+                 whatsapp_messages_sent = whatsapp_messages_sent + ?
+             WHERE subscription_id = ?`,
+            [count, count, subId]
+          );
+        }
+        await pool.query(
+          `INSERT INTO hr_credits_breakdown (recruiter_id, whatsapp_count) 
+           VALUES (?, ?) 
+           ON DUPLICATE KEY UPDATE whatsapp_count = whatsapp_count + ?`,
+          [recruiterId, count, count]
+        );
+      } catch (uErr) {
+        console.warn("Could not update WhatsApp count:", uErr.message);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "WhatsApp interaction recorded successfully."
+      });
+    } catch (error) {
+      console.error("recordCandidateWhatsApp error:", error);
+      return res.status(500).json({ success: false, message: error.message });
     }
   }
 };

@@ -23,6 +23,13 @@ const CATEGORIES_CACHE_TTL = 5 * 60 * 1000; // 5m
 const jobPostsCache = new Map();
 const JOB_POSTS_CACHE_TTL = 60 * 1000; // 60s
 
+const adminStatsCache = new Map();
+const ADMIN_STATS_CACHE_TTL = 30 * 1000; // 30s cache for admin stats to make tab switches and pagination instant
+
+const clearAdminStatsCache = () => {
+  adminStatsCache.clear();
+};
+
 const JobsModel = {
   insertJobNature: async (nature_name) => {
     try {
@@ -1130,7 +1137,7 @@ const JobsModel = {
 
   getJobPosts: async (filters = {}) => {
     try {
-      const isPublic = !filters.user_id && !filters.admin_user_id;
+      const isPublic = !filters.user_id && !filters.admin_user_id && !filters.include_stats;
       const cacheKey = isPublic ? JSON.stringify(filters) : null;
       if (cacheKey && jobPostsCache.has(cacheKey)) {
         const cached = jobPostsCache.get(cacheKey);
@@ -1195,6 +1202,9 @@ const JobsModel = {
                       job_post.bonus_amount,
                       job_post.bonus_format,
                       job_post.created_at,
+                      job_post.approval_status,
+                      job_post.approved_at,
+                      job_post.rejection_reason,
                       job_post.is_closed,
                       (SELECT COUNT(*) FROM applied_jobs WHERE applied_jobs.postId = job_post.id) AS applicants_count
                   FROM
@@ -1316,29 +1326,53 @@ const JobsModel = {
         queryParams.push(searchTerm, searchTerm);
       }
 
-      if (filters.is_closed !== undefined && filters.is_closed !== null) {
-        whereClauses.push(`job_post.is_closed = ?`);
-        queryParams.push(filters.is_closed);
+      if (filters.is_closed !== undefined && filters.is_closed !== null && filters.is_closed !== '') {
+        if (Number(filters.is_closed) === 0) {
+          whereClauses.push(`(job_post.is_closed = 0 OR job_post.is_closed IS NULL)`);
+        } else {
+          whereClauses.push(`job_post.is_closed = 1`);
+        }
       }
 
       // Approval status filter
-      if (filters.approval_status) {
-        whereClauses.push(`job_post.approval_status = ?`);
-        queryParams.push(filters.approval_status);
+      if (filters.approval_status && filters.approval_status !== 'all') {
+        if (filters.approval_status === 'pending') {
+          whereClauses.push(`(job_post.approval_status = 'pending' OR job_post.approval_status IS NULL)`);
+        } else if (filters.approval_status === 'auto_approved') {
+          whereClauses.push(`((users.auto_approve = 1 OR users.role_id = 1) AND (job_post.approval_status = 'approved' OR job_post.approval_status IS NULL))`);
+        } else {
+          whereClauses.push(`job_post.approval_status = ?`);
+          queryParams.push(filters.approval_status);
+        }
       }
 
-      // Check if hr_profiles join is needed in count and id query
-      const hasHrInWhere = Boolean(filters.searchTerm || (filters.companies && filters.companies.length > 0));
+      // Check if hr_profiles or users join is needed in count and id query
+      const hasHrInWhere = Boolean(filters.searchTerm || (filters.companies && filters.companies.length > 0) || filters.sort_key === 'company_name');
+      const hasUsersInWhere = Boolean(filters.approval_status === 'auto_approved');
       const countQuery = `
         SELECT COUNT(*) as total 
         FROM job_post
         ${hasHrInWhere ? 'LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id' : ''}
+        ${hasUsersInWhere ? 'LEFT JOIN users ON job_post.user_id = users.id' : ''}
         ${whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : ''}
       `;
 
-      // Salary sorting
+      // Sorting
+      const ALLOWED_SORT_KEYS = {
+        'job_title': 'job_post.job_title',
+        'company_name': "COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)",
+        'job_nature': 'job_post.job_nature',
+        'job_location': 'job_post.work_location',
+        'created_at': 'job_post.created_at',
+        'approved_at': 'job_post.approved_at',
+        'applicants_count': '(SELECT COUNT(*) FROM applied_jobs WHERE applied_jobs.postId = job_post.id)',
+        'is_closed': 'job_post.is_closed',
+      };
       let orderClause = "";
-      if (filters.salary_sort) {
+      if (filters.sort_key && ALLOWED_SORT_KEYS[filters.sort_key]) {
+        const dir = filters.sort_direction === 'desc' ? 'DESC' : 'ASC';
+        orderClause = ` ORDER BY ${ALLOWED_SORT_KEYS[filters.sort_key]} ${dir}`;
+      } else if (filters.salary_sort) {
         if (filters.salary_sort === "low_to_high") {
           orderClause = ` ORDER BY COALESCE(job_post.min_salary, 0) ASC`;
         } else if (filters.salary_sort === "high_to_low") {
@@ -1357,6 +1391,7 @@ const JobsModel = {
         SELECT job_post.id
         FROM job_post
         ${hasHrInWhere ? 'LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id' : ''}
+        ${hasUsersInWhere ? 'LEFT JOIN users ON job_post.user_id = users.id' : ''}
         ${whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : ''}
         ${orderClause}
         LIMIT ? OFFSET ?
@@ -1385,49 +1420,62 @@ const JobsModel = {
         totalJobs: totalCount,
         activeJobs: 0,
         closedJobs: 0,
+        approvedJobs: 0,
+        autoApprovedJobs: 0,
+        pendingJobs: 0,
         uniqueCompanies: 0
       };
 
       if (filters.include_stats) {
-        const statsWhereClauses = [];
-        const statsQueryParams = [];
-        if (filters.start_date && filters.end_date) {
-          statsWhereClauses.push(`DATE(job_post.created_at) BETWEEN ? AND ?`);
-          statsQueryParams.push(filters.start_date, filters.end_date);
-        } else if (filters.start_date) {
-          statsWhereClauses.push(`DATE(job_post.created_at) >= ?`);
-          statsQueryParams.push(filters.start_date);
-        } else if (filters.end_date) {
-          statsWhereClauses.push(`DATE(job_post.created_at) <= ?`);
-          statsQueryParams.push(filters.end_date);
-        }
-        if (filters.searchTerm) {
-          statsWhereClauses.push(`(LOWER(job_post.job_title) LIKE ? OR LOWER(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) LIKE ?)`);
-          const searchPattern = `%${filters.searchTerm.toLowerCase()}%`;
-          statsQueryParams.push(searchPattern, searchPattern);
-        }
-        if (filters.approval_status) {
-          statsWhereClauses.push(`job_post.approval_status = ?`);
-          statsQueryParams.push(filters.approval_status);
-        }
+        const statsKey = `${filters.start_date || ''}_${filters.end_date || ''}_${filters.searchTerm || ''}`;
+        const cached = adminStatsCache.get(statsKey);
+        if (cached && (Date.now() - cached.timestamp < ADMIN_STATS_CACHE_TTL)) {
+          globalStats = cached.data;
+        } else {
+          const statsWhereClauses = [];
+          const statsQueryParams = [];
+          if (filters.start_date && filters.end_date) {
+            statsWhereClauses.push(`DATE(job_post.created_at) BETWEEN ? AND ?`);
+            statsQueryParams.push(filters.start_date, filters.end_date);
+          } else if (filters.start_date) {
+            statsWhereClauses.push(`DATE(job_post.created_at) >= ?`);
+            statsQueryParams.push(filters.start_date);
+          } else if (filters.end_date) {
+            statsWhereClauses.push(`DATE(job_post.created_at) <= ?`);
+            statsQueryParams.push(filters.end_date);
+          }
+          if (filters.searchTerm) {
+            statsWhereClauses.push(`(LOWER(job_post.job_title) LIKE ? OR LOWER(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) LIKE ?)`);
+            const searchPattern = `%${filters.searchTerm.toLowerCase()}%`;
+            statsQueryParams.push(searchPattern, searchPattern);
+          }
 
-        const statsQuery = `
-          SELECT 
-            COUNT(*) as totalJobs,
-            COALESCE(SUM(CASE WHEN job_post.is_closed = 0 THEN 1 ELSE 0 END), 0) as activeJobs,
-            COALESCE(SUM(CASE WHEN job_post.is_closed = 1 THEN 1 ELSE 0 END), 0) as closedJobs,
-            COUNT(DISTINCT COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) as uniqueCompanies
-          FROM job_post
-          LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id
-          ${statsWhereClauses.length > 0 ? ` WHERE ${statsWhereClauses.join(" AND ")}` : ''}
-        `;
-        const [statsResult] = await pool.query(statsQuery, statsQueryParams);
-        globalStats = {
-          totalJobs: statsResult[0]?.totalJobs || 0,
-          activeJobs: statsResult[0]?.activeJobs || 0,
-          closedJobs: statsResult[0]?.closedJobs || 0,
-          uniqueCompanies: statsResult[0]?.uniqueCompanies || 0
-        };
+          const statsQuery = `
+            SELECT 
+              COUNT(*) as totalJobs,
+              COALESCE(SUM(CASE WHEN (job_post.is_closed = 0 OR job_post.is_closed IS NULL) THEN 1 ELSE 0 END), 0) as activeJobs,
+              COALESCE(SUM(CASE WHEN job_post.is_closed = 1 THEN 1 ELSE 0 END), 0) as closedJobs,
+              COALESCE(SUM(CASE WHEN job_post.approval_status = 'approved' THEN 1 ELSE 0 END), 0) as approvedJobs,
+              COALESCE(SUM(CASE WHEN (users.auto_approve = 1 OR users.role_id = 1) AND (job_post.approval_status = 'approved' OR job_post.approval_status IS NULL) THEN 1 ELSE 0 END), 0) as autoApprovedJobs,
+              COALESCE(SUM(CASE WHEN (job_post.approval_status = 'pending' OR job_post.approval_status IS NULL) THEN 1 ELSE 0 END), 0) as pendingJobs,
+              COUNT(DISTINCT COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) as uniqueCompanies
+            FROM job_post
+            LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id
+            LEFT JOIN users ON job_post.user_id = users.id
+            ${statsWhereClauses.length > 0 ? ` WHERE ${statsWhereClauses.join(" AND ")}` : ''}
+          `;
+          const [statsResult] = await pool.query(statsQuery, statsQueryParams);
+          globalStats = {
+            totalJobs: Number(statsResult[0]?.totalJobs || 0),
+            activeJobs: Number(statsResult[0]?.activeJobs || 0),
+            closedJobs: Number(statsResult[0]?.closedJobs || 0),
+            approvedJobs: Number(statsResult[0]?.approvedJobs || 0),
+            autoApprovedJobs: Number(statsResult[0]?.autoApprovedJobs || 0),
+            pendingJobs: Number(statsResult[0]?.pendingJobs || 0),
+            uniqueCompanies: Number(statsResult[0]?.uniqueCompanies || 0)
+          };
+          adminStatsCache.set(statsKey, { data: globalStats, timestamp: Date.now() });
+        }
       }
 
       // Helper function to safely parse JSON arrays
@@ -2999,6 +3047,7 @@ const JobsModel = {
         `),
         pool.query(`
           SELECT jp.id, jp.job_title, jp.company_name, jp.job_nature, jp.workplace_type, jp.openings, jp.created_at, jp.user_id, jp.company_logo,
+                 jp.work_location, jp.is_closed, jp.approval_status, jp.min_salary, jp.max_salary, jp.salary_type, jp.currency, jp.experience_type,
                  CONCAT(u.first_name, ' ', u.last_name) AS recruiter_name, u.email AS recruiter_email, u.profile_image
           FROM job_post jp
           LEFT JOIN users u ON jp.user_id = u.id
@@ -3403,7 +3452,34 @@ const JobsModel = {
 
   deleteJobPost: async (id) => {
     try {
+      clearAdminStatsCache();
       const [result] = await pool.query(`DELETE FROM job_post WHERE id = ?`, [id]);
+      return result;
+    } catch (error) {
+      throw new Error(error.message);
+    }
+  },
+
+  registrationClose: async (id) => {
+    try {
+      clearAdminStatsCache();
+      const [result] = await pool.query(
+        `UPDATE job_post SET is_closed = 1 WHERE id = ?`,
+        [id]
+      );
+      return result;
+    } catch (error) {
+      throw new Error(error.message);
+    }
+  },
+
+  makeJobActive: async (id) => {
+    try {
+      clearAdminStatsCache();
+      const [result] = await pool.query(
+        `UPDATE job_post SET is_closed = 0 WHERE id = ?`,
+        [id]
+      );
       return result;
     } catch (error) {
       throw new Error(error.message);
@@ -3412,9 +3488,13 @@ const JobsModel = {
 
   updateApprovalStatus: async (id, status, reason = null) => {
     try {
+      clearAdminStatsCache();
+      const isApproved = status === 'approved';
       const [result] = await pool.query(
-        `UPDATE job_post SET approval_status = ?, rejection_reason = ? WHERE id = ?`,
-        [status, reason, id]
+        isApproved
+          ? `UPDATE job_post SET approval_status = ?, rejection_reason = NULL, approved_at = NOW() WHERE id = ?`
+          : `UPDATE job_post SET approval_status = ?, rejection_reason = ? WHERE id = ?`,
+        isApproved ? [status, id] : [status, reason, id]
       );
       return result;
     } catch (error) {
@@ -3424,8 +3504,9 @@ const JobsModel = {
 
   approveAllJobPosts: async () => {
     try {
+      clearAdminStatsCache();
       const [result] = await pool.query(
-        `UPDATE job_post SET approval_status = 'approved', rejection_reason = null WHERE approval_status = 'pending'`
+        `UPDATE job_post SET approval_status = 'approved', rejection_reason = NULL, approved_at = NOW() WHERE approval_status = 'pending' OR approval_status IS NULL`
       );
       return result;
     } catch (error) {

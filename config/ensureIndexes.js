@@ -54,7 +54,29 @@ async function ensureDatabaseIndexes() {
       console.warn("⚠️ [DB] industry_types check:", tblErr.message);
     }
 
-    console.log("✅ [DB Index] Database search indexes verified successfully");
+    // Ensure email_limit and whatsapp_limit columns on subscription_plans
+    const ensureColumn = async (table, col, def) => {
+      try {
+        const [cols] = await pool.query(`SHOW COLUMNS FROM ${table} LIKE ?`, [col]);
+        if (cols.length === 0) {
+          await pool.query(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+          console.log(`⚡ [DB Schema] Added column ${col} to ${table}`);
+        }
+      } catch (err) {
+        console.warn(`⚠️ [DB Schema] Column check ${col} on ${table}:`, err.message);
+      }
+    };
+
+    await ensureColumn("subscription_plans", "email_limit", "INT NOT NULL DEFAULT 50");
+    await ensureColumn("subscription_plans", "whatsapp_limit", "INT NOT NULL DEFAULT 50");
+    await ensureColumn("subscription_plans", "excel_download_limit", "INT NOT NULL DEFAULT 50");
+    await ensureColumn("subscription_usage", "emails_sent", "INT NOT NULL DEFAULT 0");
+    await ensureColumn("subscription_usage", "emails_used", "INT NOT NULL DEFAULT 0");
+    await ensureColumn("subscription_usage", "whatsapp_messages_sent", "INT NOT NULL DEFAULT 0");
+    await ensureColumn("subscription_usage", "whatsapp_used", "INT NOT NULL DEFAULT 0");
+    await ensureColumn("subscription_usage", "excel_downloads_used", "INT NOT NULL DEFAULT 0");
+
+    console.log("✅ [DB Index] Database search indexes and schemas verified successfully");
   } catch (error) {
     console.warn("⚠️ [DB Index] Index verification warning:", error.message);
   }

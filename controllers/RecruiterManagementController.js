@@ -8,7 +8,9 @@ const RecruiterManagementController = {
         planId: req.query.planId || "",
         status: req.query.status || "",
         subscriptionStatus: req.query.subscriptionStatus || "",
-        company: req.query.company || ""
+        company: req.query.company || "",
+        startDate: req.query.startDate || "",
+        endDate: req.query.endDate || ""
       };
       const recruiters = await RecruiterManagementModel.getAllRecruiters(filters);
       res.status(200).json({
@@ -100,6 +102,25 @@ const RecruiterManagementController = {
       res.status(500).json({
         success: false,
         message: "Failed to change subscription plan.",
+        details: error.message
+      });
+    }
+  },
+
+  updateCustomPlan: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const adminId = req.user?.id || 1;
+      const result = await RecruiterManagementModel.updateCustomPlan(id, req.body, adminId);
+      res.status(200).json({
+        success: true,
+        message: result.message
+      });
+    } catch (error) {
+      console.error("Error setting custom plan limits:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to set custom limits.",
         details: error.message
       });
     }

@@ -264,9 +264,15 @@ const HrDashboardController = {
       try {
         const [subRows] = await pool.query(
           `SELECT rs.*, sp.name AS plan_name, sp.job_post_limit, sp.active_job_limit, sp.resume_view_limit, sp.resume_download_limit,
+                  COALESCE(sp.email_limit, 50) AS email_limit,
+                  COALESCE(sp.whatsapp_limit, 50) AS whatsapp_limit,
+                  COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
                   COALESCE(su.job_posts_used, 0) AS job_posts_used,
                   COALESCE(su.resume_views_used, 0) AS resume_views_used,
-                  COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used
+                  COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
+                  COALESCE(su.emails_sent, 0) AS emails_sent,
+                  COALESCE(su.whatsapp_messages_sent, 0) AS whatsapp_messages_sent,
+                  COALESCE(su.excel_downloads_used, 0) AS excel_downloads_used
            FROM recruiter_subscriptions rs
            INNER JOIN subscription_plans sp ON rs.plan_id = sp.id
            LEFT JOIN subscription_usage su ON rs.id = su.subscription_id
@@ -376,7 +382,11 @@ const HrDashboardController = {
               resume_view_limit: sub.resume_view_limit || 50,
               resume_views_used: sub.resume_views_used || 0,
               resume_download_limit: sub.resume_download_limit || 10,
-              resume_downloads_used: sub.resume_downloads_used || 0
+              resume_downloads_used: sub.resume_downloads_used || 0,
+              email_limit: sub.email_limit || 50,
+              whatsapp_limit: sub.whatsapp_limit || 50,
+              excel_download_limit: sub.excel_download_limit || 50,
+              excel_downloads_used: sub.excel_downloads_used || 0
             };
           }
         }
@@ -513,7 +523,7 @@ const HrDashboardController = {
           profile_usage_used: 45300,
           profile_usage_total: 720000,
           profile_views: 1300,
-          excel_downloads: totalDownloads,
+          excel_downloads: subData?.excel_downloads_used !== undefined ? subData.excel_downloads_used : totalDownloads,
           job_posting_used: subData.job_posts_used,
           job_posting_total: subData.job_post_limit,
           jobs_posted: totalJobs,
@@ -521,14 +531,20 @@ const HrDashboardController = {
           outreach_total: 10800000,
           email_count: 0,
           whatsapp_count: 0,
-          sms_count: 0
+          sms_count: 0,
+          email_limit: subData.email_limit || 50,
+          whatsapp_limit: subData.whatsapp_limit || 50,
+          excel_download_limit: subData.excel_download_limit || 50
         };
       } else {
         // Sync real-time dynamic jobs posted, limits & downloads counts
         creditsData.jobs_posted = totalJobs;
-        creditsData.excel_downloads = totalDownloads;
+        creditsData.excel_downloads = subData?.excel_downloads_used !== undefined ? subData.excel_downloads_used : totalDownloads;
         creditsData.job_posting_used = subData.job_posts_used;
         creditsData.job_posting_total = subData.job_post_limit;
+        creditsData.email_limit = subData.email_limit || 50;
+        creditsData.whatsapp_limit = subData.whatsapp_limit || 50;
+        creditsData.excel_download_limit = subData.excel_download_limit || 50;
       }
 
       return res.status(200).json({
