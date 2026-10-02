@@ -55,7 +55,7 @@ async function ensureDatabaseIndexes() {
       console.warn("⚠️ [DB] industry_types check:", tblErr.message);
     }
 
-    // Ensure email_limit and whatsapp_limit columns on subscription_plans
+    // Ensure essential columns across tables
     const ensureColumn = async (table, col, def) => {
       try {
         const [cols] = await pool.query(`SHOW COLUMNS FROM ${table} LIKE ?`, [col]);
@@ -68,10 +68,37 @@ async function ensureDatabaseIndexes() {
       }
     };
 
+    // users columns
+    await ensureColumn("users", "auto_approve", "TINYINT(1) DEFAULT 0");
 
+    // job_post columns
+    await ensureColumn("job_post", "approval_status", "VARCHAR(50) DEFAULT 'approved'");
+    await ensureColumn("job_post", "approved_at", "DATETIME NULL");
+    await ensureColumn("job_post", "rejection_reason", "TEXT NULL");
+    await ensureColumn("job_post", "is_closed", "TINYINT(1) DEFAULT 0");
+    await ensureColumn("job_post", "team_members", "JSON NULL");
+    await ensureColumn("job_post", "apply_link", "VARCHAR(500) NULL");
+    await ensureColumn("job_post", "is_walk_in", "TINYINT(1) DEFAULT 0");
+    await ensureColumn("job_post", "walk_in_start_date", "DATE NULL");
+    await ensureColumn("job_post", "walk_in_end_date", "DATE NULL");
+    await ensureColumn("job_post", "walk_in_start_time", "VARCHAR(50) NULL");
+    await ensureColumn("job_post", "walk_in_end_time", "VARCHAR(50) NULL");
+    await ensureColumn("job_post", "recruiter_name", "VARCHAR(255) NULL");
+    await ensureColumn("job_post", "mobile_number", "VARCHAR(50) NULL");
+    await ensureColumn("job_post", "venue_address", "TEXT NULL");
+    await ensureColumn("job_post", "google_maps_url", "VARCHAR(500) NULL");
+    await ensureColumn("job_post", "variable_amount", "DECIMAL(10,2) NULL");
+    await ensureColumn("job_post", "variable_format", "VARCHAR(50) NULL");
+    await ensureColumn("job_post", "bonus_amount", "DECIMAL(10,2) NULL");
+    await ensureColumn("job_post", "bonus_format", "VARCHAR(50) NULL");
+
+    // subscription_plans columns
     await ensureColumn("subscription_plans", "email_limit", "INT NOT NULL DEFAULT 50");
     await ensureColumn("subscription_plans", "whatsapp_limit", "INT NOT NULL DEFAULT 50");
     await ensureColumn("subscription_plans", "excel_download_limit", "INT NOT NULL DEFAULT 50");
+    await ensureColumn("subscription_plans", "sub_recruiter_limit", "INT NOT NULL DEFAULT 1");
+
+    // subscription_usage columns
     await ensureColumn("subscription_usage", "emails_sent", "INT NOT NULL DEFAULT 0");
     await ensureColumn("subscription_usage", "emails_used", "INT NOT NULL DEFAULT 0");
     await ensureColumn("subscription_usage", "whatsapp_messages_sent", "INT NOT NULL DEFAULT 0");
