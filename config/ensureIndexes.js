@@ -4,6 +4,7 @@ const pool = require("./dbConfig");
  * Automatically creates necessary database performance indexes if they do not already exist.
  * This guarantees fast query execution and prevents full table scans on large datasets.
  */
+
 async function ensureDatabaseIndexes() {
   const ensureIndex = async (table, indexName, columns) => {
     try {
