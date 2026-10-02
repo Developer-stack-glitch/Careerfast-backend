@@ -67,6 +67,7 @@ async function ensureDatabaseIndexes() {
       }
     };
 
+
     await ensureColumn("subscription_plans", "email_limit", "INT NOT NULL DEFAULT 50");
     await ensureColumn("subscription_plans", "whatsapp_limit", "INT NOT NULL DEFAULT 50");
     await ensureColumn("subscription_plans", "excel_download_limit", "INT NOT NULL DEFAULT 50");
