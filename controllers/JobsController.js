@@ -342,21 +342,34 @@ const jobPosting = async (request, response) => {
         );
         const companyTotalJobs = Math.max(Number(sub.job_posts_used || 0), Number(totalJobRows[0]?.count || 0));
 
-        // 1. Monthly job posting limit check
-        if (companyTotalJobs >= sub.job_post_limit) {
+        // 1. Total job posting limit check (e.g. 40 total jobs on Free Plan)
+        if (sub.job_post_limit && companyTotalJobs >= sub.job_post_limit) {
           return response.status(403).send({
-            message: "Monthly Job Posting Limit Reached",
-            details: `Monthly job posting limit reached. Your company has used ${companyTotalJobs} of ${sub.job_post_limit} available job posts. Upgrade your plan to post more jobs.`
+            message: "Total Job Posting Limit Reached",
+            details: `Total job posting limit reached. Your company has used ${companyTotalJobs} of ${sub.job_post_limit} total available job posts under your ${sub.plan_name || 'subscription'} plan. Please upgrade your plan to post more jobs.`
           });
         }
 
-        // 2. Maximum active jobs limit check (company-wide live active slots)
+        // 2. Monthly job posting limit check (20 jobs per month / 30-day billing period)
+        const [monthlyJobRows] = await pool.query(
+          `SELECT COUNT(*) as count FROM job_post WHERE user_id IN (?) AND created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+          [companyUids]
+        );
+        const companyMonthlyJobs = Number(monthlyJobRows[0]?.count || 0);
+        if (sub.active_job_limit && companyMonthlyJobs >= sub.active_job_limit) {
+          return response.status(403).send({
+            message: "Monthly Job Posting Limit Reached",
+            details: `Monthly job posting limit reached (${companyMonthlyJobs} of ${sub.active_job_limit} jobs posted in the last 30 days). You can post again in your next monthly cycle or upgrade your plan for higher limits.`
+          });
+        }
+
+        // 3. Maximum active jobs limit check (company-wide live active slots)
         const [activeCountRows] = await pool.query(
-          `SELECT COUNT(*) AS count FROM job_post WHERE user_id IN (?) AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
+          `SELECT COUNT(*) AS count FROM job_post WHERE user_id IN (?) AND (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'approved' OR approval_status = 'pending' OR approval_status IS NULL)`,
           [companyUids]
         );
         const companyActiveJobs = Number(activeCountRows[0]?.count || 0);
-        if (companyActiveJobs >= sub.active_job_limit) {
+        if (sub.active_job_limit && companyActiveJobs >= sub.active_job_limit) {
           return response.status(403).send({
             message: "Maximum Active Job Limit Reached",
             details: `Your company has reached its maximum active job limit (${companyActiveJobs} of ${sub.active_job_limit} active slots). Close an existing active job or upgrade your plan before posting a new job.`

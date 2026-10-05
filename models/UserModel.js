@@ -205,10 +205,76 @@ const UserModel = {
             );
             if (orgRows.length > 0) orgTypeName = orgRows[0].name;
           }
-          await pool.query(
+          const [hrRes] = await pool.query(
             `INSERT INTO hr_profiles (user_id, company_name, organization_type, contact_email, contact_phone) VALUES (?, ?, ?, ?, ?)`,
             [userId, organization, orgTypeName, email, phone]
           );
+          const companyId = hrRes.insertId;
+
+          // 🎁 Automatically assign Free Plan (20 jobs/month, 40 total jobs) to newly registered recruiter
+          try {
+            let [freePlanRows] = await pool.query(
+              `SELECT * FROM subscription_plans WHERE slug = 'free' OR name LIKE '%Free%' ORDER BY id ASC LIMIT 1`
+            );
+
+            let freePlan = freePlanRows[0];
+            if (!freePlan) {
+              const insertFreePlanQuery = `
+                INSERT INTO subscription_plans (
+                  name, slug, description, plan_type, price, currency, validity_days,
+                  job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, sub_recruiter_limit,
+                  resume_view_limit, resume_download_limit, email_limit, whatsapp_limit, excel_download_limit,
+                  candidate_search, candidate_contact, resume_database,
+                  interview_management, application_management, shortlisting, company_profile, recruiter_dashboard, email_notifications, company_branding,
+                  status
+                ) VALUES (
+                  'Free Plan', 'free', 'Free plan for new recruiters with 20 job postings per month up to 40 total job postings.', 'monthly', 0.00, 'INR', 60,
+                  40, 20, 0, 0, 1,
+                  50, 10, 50, 50, 50,
+                  0, 0, 0,
+                  1, 1, 1, 1, 1, 1, 0,
+                  'active'
+                )
+              `;
+              const [newPlanRes] = await pool.query(insertFreePlanQuery);
+              const [newPlanRows] = await pool.query(`SELECT * FROM subscription_plans WHERE id = ?`, [newPlanRes.insertId]);
+              freePlan = newPlanRows[0];
+            }
+
+            if (freePlan) {
+              const startDate = new Date();
+              const expiryDate = new Date();
+              expiryDate.setDate(expiryDate.getDate() + (freePlan.validity_days || 60));
+
+              const [subRes] = await pool.query(
+                `INSERT INTO recruiter_subscriptions (
+                  recruiter_id, company_id, plan_id, billing_cycle, price_paid,
+                  start_date, expiry_date, status, payment_status
+                ) VALUES (?, ?, ?, 'monthly', 0.00, ?, ?, 'Active', 'Paid')`,
+                [userId, companyId || null, freePlan.id, startDate, expiryDate]
+              );
+              const subId = subRes.insertId;
+
+              await pool.query(
+                `INSERT INTO subscription_usage (
+                  subscription_id, recruiter_id, billing_period_start, billing_period_end,
+                  job_posts_used, resume_views_used, resume_downloads_used,
+                  featured_jobs_used, urgent_jobs_used, candidate_contacts_used
+                ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0)`,
+                [subId, userId, startDate, expiryDate]
+              );
+
+              await pool.query(
+                `INSERT INTO subscription_history (
+                  subscription_id, recruiter_id, old_plan_id, new_plan_id,
+                  change_type, effective_type, previous_expiry, new_expiry, reason, changed_by_admin_id
+                ) VALUES (?, ?, NULL, ?, 'initial_assignment', 'immediately', NULL, ?, 'Free Plan automatically assigned upon recruiter registration', NULL)`,
+                [subId, userId, freePlan.id, expiryDate]
+              );
+            }
+          } catch (subErr) {
+            console.error("⚠️ Error auto-assigning Free Plan to new recruiter:", subErr.message);
+          }
         }
 
         result = await pool.query(

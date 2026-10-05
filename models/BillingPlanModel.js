@@ -4,7 +4,11 @@ const BillingPlanModel = {
   getAllPlans: async () => {
     try {
       const [plans] = await pool.query(
-        `SELECT * FROM billing_plans WHERE is_active = 1 ORDER BY id`
+        `SELECT * FROM subscription_plans 
+         WHERE status = 'active' 
+           AND (plan_type != 'custom' OR plan_type IS NULL)
+           AND (slug NOT LIKE 'custom-%')
+         ORDER BY price ASC, id ASC`
       );
       return plans;
     } catch (error) {

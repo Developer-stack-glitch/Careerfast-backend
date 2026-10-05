@@ -112,7 +112,55 @@ const RecruiterSubscriptionController = {
         LIMIT 1
       `;
 
-      const [rows] = await pool.query(query, [recruiterId]);
+      let [rows] = await pool.query(query, [recruiterId]);
+
+      if (rows.length === 0) {
+        // Auto-provision Free Plan if the user is a recruiter (role_id: 3)
+        try {
+          const [userCheck] = await pool.query(`SELECT id, role_id FROM users WHERE id = ?`, [recruiterId]);
+          if (userCheck.length > 0 && userCheck[0].role_id === 3) {
+            const [freePlanRows] = await pool.query(
+              `SELECT * FROM subscription_plans WHERE slug = 'free' OR name LIKE '%Free%' ORDER BY id ASC LIMIT 1`
+            );
+            if (freePlanRows.length > 0) {
+              const freePlan = freePlanRows[0];
+              const startDate = new Date();
+              const expiryDate = new Date();
+              expiryDate.setDate(expiryDate.getDate() + (freePlan.validity_days || 60));
+
+              const [subRes] = await pool.query(
+                `INSERT INTO recruiter_subscriptions (
+                  recruiter_id, plan_id, billing_cycle, price_paid,
+                  start_date, expiry_date, status, payment_status
+                ) VALUES (?, ?, 'monthly', 0.00, ?, ?, 'Active', 'Paid')`,
+                [recruiterId, freePlan.id, startDate, expiryDate]
+              );
+              const subId = subRes.insertId;
+
+              await pool.query(
+                `INSERT INTO subscription_usage (
+                  subscription_id, recruiter_id, billing_period_start, billing_period_end,
+                  job_posts_used, resume_views_used, resume_downloads_used,
+                  featured_jobs_used, urgent_jobs_used, candidate_contacts_used
+                ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0)`,
+                [subId, recruiterId, startDate, expiryDate]
+              );
+
+              await pool.query(
+                `INSERT INTO subscription_history (
+                  subscription_id, recruiter_id, old_plan_id, new_plan_id,
+                  change_type, effective_type, previous_expiry, new_expiry, reason, changed_by_admin_id
+                ) VALUES (?, ?, NULL, ?, 'initial_assignment', 'immediately', NULL, ?, 'Free Plan auto-provisioned', NULL)`,
+                [subId, recruiterId, freePlan.id, expiryDate]
+              );
+
+              [rows] = await pool.query(query, [recruiterId]);
+            }
+          }
+        } catch (autoErr) {
+          console.error("Auto-provision Free Plan error:", autoErr.message);
+        }
+      }
 
       if (rows.length === 0) {
         // Fallback if no subscription is assigned yet

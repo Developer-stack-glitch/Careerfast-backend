@@ -199,6 +199,13 @@ async function createSubscriptionTables() {
           status
         ) VALUES 
         (
+          'Free Plan', 'free', 'Free starter plan for new recruiters with 20 job postings per month up to 40 total job postings.', 'monthly', 0.00, 'INR', 60,
+          40, 20, 0, 0,
+          50, 10, 0, 0, 0,
+          1, 1, 1, 1, 1, 1, 0,
+          'active'
+        ),
+        (
           'Basic', 'basic', 'Essential recruitment plan for hiring entry-level candidates and startups.', 'monthly', 4999.00, 'INR', 30,
           5, 3, 0, 0,
           50, 10, 0, 0, 0,
@@ -221,7 +228,7 @@ async function createSubscriptionTables() {
         );
       `;
       await pool.query(seedPlansQuery);
-      console.log("✅ Seeded default subscription plans: Basic, Professional, Premium.");
+      console.log("✅ Seeded default subscription plans: Free Plan, Basic, Professional, Premium.");
     } else {
       console.log("ℹ️ Subscription plans already populated. Count:", existingPlans[0].count);
     }
