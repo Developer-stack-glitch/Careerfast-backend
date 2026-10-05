@@ -267,6 +267,26 @@ const RecruiterManagementController = {
         details: error.message
       });
     }
+  },
+
+  loginAsRecruiter: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const data = await RecruiterManagementModel.loginAsRecruiter(id);
+      res.status(200).json({
+        success: true,
+        message: `Successfully generated recruiter session for ${data.recruiter.first_name || data.recruiter.email}`,
+        token: data.token,
+        data: data.recruiter
+      });
+    } catch (error) {
+      console.error("Error in loginAsRecruiter:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to login as recruiter.",
+        details: error.message
+      });
+    }
   }
 };
 

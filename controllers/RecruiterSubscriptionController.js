@@ -50,9 +50,9 @@ const RecruiterSubscriptionController = {
           sp.active_job_limit,
           sp.resume_view_limit,
           sp.resume_download_limit,
-          COALESCE(sp.email_limit, 50) AS email_limit,
-          COALESCE(sp.whatsapp_limit, 50) AS whatsapp_limit,
-          COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
+          COALESCE(sp.email_limit, 0) AS email_limit,
+          COALESCE(sp.whatsapp_limit, 0) AS whatsapp_limit,
+          COALESCE(sp.excel_download_limit, 0) AS excel_download_limit,
           sp.featured_job_limit,
           sp.urgent_job_limit,
 
@@ -179,10 +179,16 @@ const RecruiterSubscriptionController = {
       const isExpired = new Date(sub.expiry_date) < new Date() || sub.subscription_status === 'Expired';
       const isSuspended = sub.subscription_status === 'Suspended';
 
+      const isCustomPlan = Boolean(
+        sub.plan_type?.toLowerCase() === 'custom' ||
+        (sub.plan_slug && sub.plan_slug.toLowerCase().startsWith('custom')) ||
+        (sub.plan_name && sub.plan_name.toLowerCase().includes('custom'))
+      );
+
       const permissionsObj = {
-        candidate_search: Boolean(sub.candidate_search) && !isExpired && !isSuspended,
-        candidate_contact: Boolean(sub.candidate_contact) && !isExpired && !isSuspended,
-        resume_database: Boolean(sub.resume_database) && !isExpired && !isSuspended,
+        candidate_search: isCustomPlan && Boolean(sub.candidate_search) && !isExpired && !isSuspended,
+        candidate_contact: isCustomPlan && Boolean(sub.candidate_contact) && !isExpired && !isSuspended,
+        resume_database: isCustomPlan && Boolean(sub.resume_database) && !isExpired && !isSuspended,
         interview_management: Boolean(sub.interview_management),
         application_management: Boolean(sub.application_management),
         shortlisting: Boolean(sub.shortlisting),
@@ -258,14 +264,14 @@ const RecruiterSubscriptionController = {
         job_post_limit: sub.job_post_limit,
         job_posts_limit: sub.job_post_limit,
         active_job_limit: sub.active_job_limit,
-        resume_view_limit: sub.resume_view_limit,
-        resume_views_limit: sub.resume_view_limit,
-        resume_download_limit: sub.resume_download_limit,
-        resume_downloads_limit: sub.resume_download_limit,
-        email_limit: sub.email_limit ?? 50,
-        whatsapp_limit: sub.whatsapp_limit ?? 50,
-        excel_download_limit: sub.excel_download_limit ?? 50,
-        excel_downloads_limit: sub.excel_download_limit ?? 50,
+        resume_view_limit: isCustomPlan ? sub.resume_view_limit : 0,
+        resume_views_limit: isCustomPlan ? sub.resume_view_limit : 0,
+        resume_download_limit: isCustomPlan ? sub.resume_download_limit : 0,
+        resume_downloads_limit: isCustomPlan ? sub.resume_download_limit : 0,
+        email_limit: isCustomPlan ? (sub.email_limit ?? 0) : 0,
+        whatsapp_limit: isCustomPlan ? (sub.whatsapp_limit ?? 0) : 0,
+        excel_download_limit: isCustomPlan ? (sub.excel_download_limit ?? 0) : 0,
+        excel_downloads_limit: isCustomPlan ? (sub.excel_download_limit ?? 0) : 0,
         featured_job_limit: sub.featured_job_limit,
         urgent_job_limit: sub.urgent_job_limit
       };
@@ -279,21 +285,21 @@ const RecruiterSubscriptionController = {
         active_job_limit: sub.active_job_limit,
         active_jobs_remaining: companyRemainingActive,
         resume_views_used: sub.resume_views_used,
-        resume_views_limit: sub.resume_view_limit,
-        resume_views_remaining: Math.max(0, sub.resume_view_limit - sub.resume_views_used),
+        resume_views_limit: effectiveLimits.resume_view_limit,
+        resume_views_remaining: Math.max(0, effectiveLimits.resume_view_limit - sub.resume_views_used),
         resume_downloads_used: sub.resume_downloads_used,
-        resume_downloads_limit: sub.resume_download_limit,
-        resume_downloads_remaining: Math.max(0, sub.resume_download_limit - sub.resume_downloads_used),
+        resume_downloads_limit: effectiveLimits.resume_download_limit,
+        resume_downloads_remaining: Math.max(0, effectiveLimits.resume_download_limit - sub.resume_downloads_used),
         emails_sent: sub.emails_sent || 0,
-        email_limit: sub.email_limit ?? 50,
-        emails_remaining: Math.max(0, (sub.email_limit ?? 50) - (sub.emails_sent || 0)),
+        email_limit: effectiveLimits.email_limit,
+        emails_remaining: Math.max(0, effectiveLimits.email_limit - (sub.emails_sent || 0)),
         whatsapp_messages_sent: sub.whatsapp_messages_sent || 0,
-        whatsapp_limit: sub.whatsapp_limit ?? 50,
-        whatsapp_remaining: Math.max(0, (sub.whatsapp_limit ?? 50) - (sub.whatsapp_messages_sent || 0)),
+        whatsapp_limit: effectiveLimits.whatsapp_limit,
+        whatsapp_remaining: Math.max(0, effectiveLimits.whatsapp_limit - (sub.whatsapp_messages_sent || 0)),
         excel_downloads_used: sub.excel_downloads_used || 0,
-        excel_download_limit: sub.excel_download_limit ?? 50,
-        excel_downloads_limit: sub.excel_download_limit ?? 50,
-        excel_downloads_remaining: Math.max(0, (sub.excel_download_limit ?? 50) - (sub.excel_downloads_used || 0)),
+        excel_download_limit: effectiveLimits.excel_download_limit,
+        excel_downloads_limit: effectiveLimits.excel_downloads_limit,
+        excel_downloads_remaining: Math.max(0, effectiveLimits.excel_download_limit - (sub.excel_downloads_used || 0)),
         featured_jobs_used: sub.featured_jobs_used,
         featured_job_limit: sub.featured_job_limit,
         featured_jobs_remaining: Math.max(0, sub.featured_job_limit - sub.featured_jobs_used),
@@ -313,25 +319,25 @@ const RecruiterSubscriptionController = {
         effectivePermissions = {
           ...permissionsObj,
           can_post_jobs: subPerms.can_post_jobs !== false,
-          can_view_resumes: subPerms.can_view_resumes !== false,
-          can_download_resumes: subPerms.can_download_resumes !== false,
-          can_contact_candidates: subPerms.can_contact_candidates !== false,
+          can_view_resumes: isCustomPlan && subPerms.can_view_resumes !== false,
+          can_download_resumes: isCustomPlan && subPerms.can_download_resumes !== false,
+          can_contact_candidates: isCustomPlan && subPerms.can_contact_candidates !== false,
           can_manage_applications: subPerms.can_manage_applications !== false,
           can_edit_company_profile: subPerms.can_edit_company_profile === true,
           can_manage_team: false,
           can_manage_billing: false,
-          candidate_search: subPerms.can_view_resumes !== false,
-          candidate_contact: subPerms.can_contact_candidates !== false,
-          resume_database: subPerms.can_view_resumes !== false
+          candidate_search: isCustomPlan && subPerms.can_view_resumes !== false,
+          candidate_contact: isCustomPlan && subPerms.can_contact_candidates !== false,
+          resume_database: isCustomPlan && subPerms.can_view_resumes !== false
         };
 
         // If split quota mode, reflect sub-recruiter's specific quota
         if (subPerms.quota_mode === 'split') {
           const subJobsLimit = Number(subPerms.allocated_job_posts || 0);
           const subJobsUsed = Number(subPerms.used_job_posts || 0);
-          const subViewsLimit = Number(subPerms.allocated_resume_views || 0);
+          const subViewsLimit = isCustomPlan ? Number(subPerms.allocated_resume_views || 0) : 0;
           const subViewsUsed = Number(subPerms.used_resume_views || 0);
-          const subDownloadsLimit = Number(subPerms.allocated_resume_downloads || 0);
+          const subDownloadsLimit = isCustomPlan ? Number(subPerms.allocated_resume_downloads || 0) : 0;
           const subDownloadsUsed = Number(subPerms.used_resume_downloads || 0);
 
           effectiveLimits.job_post_limit = subJobsLimit;
@@ -371,9 +377,9 @@ const RecruiterSubscriptionController = {
         effectivePermissions.can_manage_team = true;
         effectivePermissions.can_manage_billing = true;
         effectivePermissions.can_post_jobs = true;
-        effectivePermissions.can_view_resumes = true;
-        effectivePermissions.can_download_resumes = true;
-        effectivePermissions.can_contact_candidates = true;
+        effectivePermissions.can_view_resumes = isCustomPlan;
+        effectivePermissions.can_download_resumes = isCustomPlan;
+        effectivePermissions.can_contact_candidates = isCustomPlan;
         effectivePermissions.can_manage_applications = true;
         effectivePermissions.can_edit_company_profile = true;
       }
@@ -432,6 +438,7 @@ const RecruiterSubscriptionController = {
           is_suspended: isSuspended,
           is_sub_recruiter: isSubRecruiter,
           sub_recruiter_info: subRecruiterInfo,
+          is_custom: isCustomPlan,
 
           plan: {
             id: sub.plan_id,
@@ -490,6 +497,9 @@ const RecruiterSubscriptionController = {
           rs.expiry_date,
           rs.status AS subscription_status,
           sp.name AS plan_name,
+          sp.slug AS plan_slug,
+          sp.plan_type,
+          sp.candidate_search,
           sp.resume_view_limit,
           su.id AS usage_id,
           COALESCE(su.resume_views_used, 0) AS resume_views_used
@@ -528,6 +538,21 @@ const RecruiterSubscriptionController = {
           limit_reached: true,
           message: "Account Suspended",
           details: "Your recruiter account is currently suspended. Please contact support."
+        });
+      }
+
+      const isCustomPlan = Boolean(
+        sub.plan_type?.toLowerCase() === 'custom' ||
+        (sub.plan_slug && sub.plan_slug.toLowerCase().startsWith('custom')) ||
+        (sub.plan_name && sub.plan_name.toLowerCase().includes('custom'))
+      );
+
+      if (!isCustomPlan) {
+        return res.status(403).json({
+          success: false,
+          limit_reached: true,
+          message: "Custom Plan Required",
+          details: `Your current ${sub.plan_name} Plan is configured for Job Posting only. Candidate profile and resume views are exclusive to Custom Plans. Please upgrade to a Custom Plan to access candidate resumes.`
         });
       }
 
@@ -647,6 +672,9 @@ const RecruiterSubscriptionController = {
           rs.expiry_date,
           rs.status AS subscription_status,
           sp.name AS plan_name,
+          sp.slug AS plan_slug,
+          sp.plan_type,
+          sp.resume_database,
           sp.resume_download_limit,
           su.id AS usage_id,
           COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used
@@ -685,6 +713,21 @@ const RecruiterSubscriptionController = {
           limit_reached: true,
           message: "Account Suspended",
           details: "Your recruiter account is currently suspended. Please contact support."
+        });
+      }
+
+      const isCustomPlan = Boolean(
+        sub.plan_type?.toLowerCase() === 'custom' ||
+        (sub.plan_slug && sub.plan_slug.toLowerCase().startsWith('custom')) ||
+        (sub.plan_name && sub.plan_name.toLowerCase().includes('custom'))
+      );
+
+      if (!isCustomPlan) {
+        return res.status(403).json({
+          success: false,
+          limit_reached: true,
+          message: "Custom Plan Required",
+          details: `Your current ${sub.plan_name} Plan is configured for Job Posting only. Resume downloads are exclusive to Custom Plans. Please upgrade to a Custom Plan to download resumes.`
         });
       }
 
@@ -802,7 +845,7 @@ const RecruiterSubscriptionController = {
 
       // Check recruiter plan permission
       const [subRows] = await pool.query(
-        `SELECT sp.candidate_contact, rs.status, rs.expiry_date
+        `SELECT sp.name, sp.slug, sp.plan_type, sp.candidate_contact, rs.status, rs.expiry_date
          FROM recruiter_subscriptions rs
          JOIN subscription_plans sp ON rs.plan_id = sp.id
          WHERE rs.recruiter_id = ?
@@ -813,12 +856,18 @@ const RecruiterSubscriptionController = {
       if (subRows.length > 0) {
         const sub = subRows[0];
         const isExpired = new Date(sub.expiry_date) < new Date() || sub.status === 'Expired';
-        if (sub.candidate_contact === 0 || isExpired) {
+        const isCustom = sub.plan_type?.toLowerCase() === 'custom' || sub.slug?.toLowerCase().startsWith('custom') || sub.name?.toLowerCase().includes('custom');
+        if (!isCustom || sub.candidate_contact === 0 || isExpired) {
           return res.status(403).json({
             success: false,
-            message: "Direct candidate contact is not included in your subscription plan. Please upgrade your plan."
+            message: "Direct candidate messaging is exclusive to Custom Plans. Your current plan is configured for Job Posting only."
           });
         }
+      } else {
+        return res.status(403).json({
+          success: false,
+          message: "No active subscription found. Please subscribe to a Custom Plan to contact candidates."
+        });
       }
 
       // Get recruiter profile info
@@ -950,7 +999,9 @@ const RecruiterSubscriptionController = {
           rs.expiry_date,
           rs.status AS subscription_status,
           sp.name AS plan_name,
-          COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
+          sp.slug AS plan_slug,
+          sp.plan_type,
+          COALESCE(sp.excel_download_limit, 0) AS excel_download_limit,
           su.id AS usage_id,
           COALESCE(su.excel_downloads_used, 0) AS excel_downloads_used
         FROM recruiter_subscriptions rs
@@ -991,8 +1042,23 @@ const RecruiterSubscriptionController = {
         });
       }
 
+      const isCustomPlan = Boolean(
+        sub.plan_type?.toLowerCase() === 'custom' ||
+        (sub.plan_slug && sub.plan_slug.toLowerCase().startsWith('custom')) ||
+        (sub.plan_name && sub.plan_name.toLowerCase().includes('custom'))
+      );
+
+      if (!isCustomPlan) {
+        return res.status(403).json({
+          success: false,
+          limit_reached: true,
+          message: "Custom Plan Required",
+          details: `Your current ${sub.plan_name} Plan is configured for Job Posting only. Exporting candidates to Excel is exclusive to Custom Plans. Please upgrade to a Custom Plan.`
+        });
+      }
+
       const currentUsed = Number(sub.excel_downloads_used || 0);
-      const limit = Number(sub.excel_download_limit || 50);
+      const limit = Number(sub.excel_download_limit || 0);
       const remainingBefore = Math.max(0, limit - currentUsed);
 
       if (currentUsed + count > limit) {

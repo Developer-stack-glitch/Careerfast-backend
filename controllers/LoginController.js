@@ -82,9 +82,11 @@ const login = async (request, response) => {
       throw new Error("Invalid username or password");
     }
   } catch (error) {
-    response.status(500).json({
-      message: "Error while login",
+    const isSuspended = error.message && error.message.toLowerCase().includes("suspended");
+    response.status(isSuspended ? 403 : 500).json({
+      message: error.message || "Error while login",
       details: error.message,
+      account_suspended: isSuspended,
     });
   }
 };

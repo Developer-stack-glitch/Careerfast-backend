@@ -36,6 +36,9 @@ router.use("/events", eventRoutes);
 
 // Login module APIs
 router.post("/login", LoginController.login);
+router.get("/auth/verify-session", verifyToken, (req, res) => {
+  res.status(200).json({ success: true, user: req.user });
+});
 
 // ==========================================
 // 👑 Super Admin Subscription Plan Routes
@@ -61,8 +64,21 @@ router.post("/admin/recruiters/:id/custom-plan", verifyToken, verifySuperAdmin, 
 router.put("/admin/recruiters/:id/status", verifyToken, verifySuperAdmin, RecruiterManagementController.updateRecruiterStatus);
 router.post("/admin/recruiters/:id/reset-password", verifyToken, verifySuperAdmin, RecruiterManagementController.resetPassword);
 router.put("/admin/recruiters/:id/auto-approve", verifyToken, verifySuperAdmin, RecruiterManagementController.toggleAutoApprove);
+router.post("/admin/recruiters/:id/login-as", verifyToken, verifySuperAdmin, RecruiterManagementController.loginAsRecruiter);
 router.get("/admin/subscriptions", verifyToken, verifySuperAdmin, RecruiterManagementController.getAllSubscriptions);
 router.get("/admin/audit-logs", verifyToken, verifySuperAdmin, RecruiterManagementController.getAuditLogs);
+
+// ==========================================
+// 🛡️ Super Admin User & Role Management Routes
+// ==========================================
+const AdminUserController = require("../controllers/AdminUserController");
+router.get("/admin/users", verifyToken, verifySuperAdmin, AdminUserController.getAllAdminUsers);
+router.get("/admin/users/:id", verifyToken, verifySuperAdmin, AdminUserController.getAdminUserById);
+router.post("/admin/users", verifyToken, verifySuperAdmin, AdminUserController.createAdminUser);
+router.put("/admin/users/:id", verifyToken, verifySuperAdmin, AdminUserController.updateAdminUser);
+router.put("/admin/users/:id/status", verifyToken, verifySuperAdmin, AdminUserController.toggleAdminStatus);
+router.post("/admin/users/:id/reset-password", verifyToken, verifySuperAdmin, AdminUserController.resetAdminPassword);
+router.delete("/admin/users/:id", verifyToken, verifySuperAdmin, AdminUserController.deleteAdminUser);
 
 // ==========================================
 // 👥 Recruiter Team & Sub-Recruiter Routes

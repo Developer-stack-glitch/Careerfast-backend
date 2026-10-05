@@ -1453,10 +1453,10 @@ const JobsModel = {
           const statsQuery = `
             SELECT 
               COUNT(*) as totalJobs,
-              COALESCE(SUM(CASE WHEN (job_post.is_closed = 0 OR job_post.is_closed IS NULL) THEN 1 ELSE 0 END), 0) as activeJobs,
+              COALESCE(SUM(CASE WHEN (job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND job_post.approval_status = 'approved' THEN 1 ELSE 0 END), 0) as activeJobs,
               COALESCE(SUM(CASE WHEN job_post.is_closed = 1 THEN 1 ELSE 0 END), 0) as closedJobs,
               COALESCE(SUM(CASE WHEN job_post.approval_status = 'approved' THEN 1 ELSE 0 END), 0) as approvedJobs,
-              COALESCE(SUM(CASE WHEN (users.auto_approve = 1 OR users.role_id = 1) AND (job_post.approval_status = 'approved' OR job_post.approval_status IS NULL) THEN 1 ELSE 0 END), 0) as autoApprovedJobs,
+              COALESCE(SUM(CASE WHEN (users.auto_approve = 1 OR users.role_id = 1) AND job_post.approval_status = 'approved' THEN 1 ELSE 0 END), 0) as autoApprovedJobs,
               COALESCE(SUM(CASE WHEN (job_post.approval_status = 'pending' OR job_post.approval_status IS NULL) THEN 1 ELSE 0 END), 0) as pendingJobs,
               COUNT(DISTINCT COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) as uniqueCompanies
             FROM job_post

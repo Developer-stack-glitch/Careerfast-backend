@@ -1,5 +1,6 @@
 const pool = require("../config/dbConfig");
 const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 
 const RecruiterManagementModel = {
   getAllRecruiters: async (filters = {}) => {
@@ -24,7 +25,7 @@ const RecruiterManagementModel = {
           u.phone,
           CAST(u.is_active AS UNSIGNED) AS user_active,
           u.created_date AS recruiter_created_date,
-          u.last_active,
+          COALESCE(u.last_active, u.updated_date, u.created_date) AS last_active,
           u.auto_approve,
 
           hp.id AS company_id,
@@ -52,17 +53,17 @@ const RecruiterManagementModel = {
           COALESCE(rs.status, 'No Plan') AS subscription_status,
           COALESCE(rs.payment_status, 'Unpaid') AS payment_status,
 
-          /* Limits */
+          /* Limits - Only job post applies to regular subscription plans; non-job features are Custom Plan only */
           COALESCE(sp.job_post_limit, 0) AS job_post_limit,
           COALESCE(sp.active_job_limit, 0) AS active_job_limit,
-          COALESCE(sp.resume_view_limit, 0) AS resume_view_limit,
-          COALESCE(sp.resume_download_limit, 0) AS resume_download_limit,
-          COALESCE(sp.featured_job_limit, 0) AS featured_job_limit,
-          COALESCE(sp.urgent_job_limit, 0) AS urgent_job_limit,
-          COALESCE(sp.sub_recruiter_limit, 1) AS sub_recruiter_limit,
-          COALESCE(sp.email_limit, 50) AS email_limit,
-          COALESCE(sp.whatsapp_limit, 50) AS whatsapp_limit,
-          COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.resume_view_limit, 0) ELSE 0 END AS resume_view_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.resume_download_limit, 0) ELSE 0 END AS resume_download_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.featured_job_limit, 0) ELSE 0 END AS featured_job_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.urgent_job_limit, 0) ELSE 0 END AS urgent_job_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.sub_recruiter_limit, 0) ELSE 0 END AS sub_recruiter_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.email_limit, 0) ELSE 0 END AS email_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.whatsapp_limit, 0) ELSE 0 END AS whatsapp_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.excel_download_limit, 0) ELSE 0 END AS excel_download_limit,
 
           /* Real-time Usage */
           GREATEST(
@@ -92,7 +93,12 @@ const RecruiterManagementModel = {
             FROM job_post jp 
             WHERE (jp.user_id = u.id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = u.id))
               AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
-          ) AS active_jobs_count
+          ) AS active_jobs_count,
+          (
+            SELECT MAX(jp.created_at) 
+            FROM job_post jp 
+            WHERE (jp.user_id = u.id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = u.id))
+          ) AS last_job_posted
 
         FROM users u
         LEFT JOIN hr_profiles hp ON u.id = hp.user_id
@@ -179,7 +185,7 @@ const RecruiterManagementModel = {
           u.phone,
           CAST(u.is_active AS UNSIGNED) AS user_active,
           u.created_date,
-          u.last_active,
+          COALESCE(u.last_active, u.updated_date, u.created_date) AS last_active,
           u.profile_image AS user_avatar,
 
           hp.id AS company_id,
@@ -219,17 +225,17 @@ const RecruiterManagementModel = {
           rs.status AS subscription_status,
           rs.payment_status,
 
-          /* Limits */
+          /* Limits - Only job post applies to regular subscription plans; non-job features are Custom Plan only */
           COALESCE(sp.job_post_limit, 0) AS job_post_limit,
           COALESCE(sp.active_job_limit, 0) AS active_job_limit,
-          COALESCE(sp.resume_view_limit, 0) AS resume_view_limit,
-          COALESCE(sp.resume_download_limit, 0) AS resume_download_limit,
-          COALESCE(sp.featured_job_limit, 0) AS featured_job_limit,
-          COALESCE(sp.urgent_job_limit, 0) AS urgent_job_limit,
-          COALESCE(sp.sub_recruiter_limit, 1) AS sub_recruiter_limit,
-          COALESCE(sp.email_limit, 50) AS email_limit,
-          COALESCE(sp.whatsapp_limit, 50) AS whatsapp_limit,
-          COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.resume_view_limit, 0) ELSE 0 END AS resume_view_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.resume_download_limit, 0) ELSE 0 END AS resume_download_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.featured_job_limit, 0) ELSE 0 END AS featured_job_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.urgent_job_limit, 0) ELSE 0 END AS urgent_job_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.sub_recruiter_limit, 0) ELSE 0 END AS sub_recruiter_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.email_limit, 0) ELSE 0 END AS email_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.whatsapp_limit, 0) ELSE 0 END AS whatsapp_limit,
+          CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.excel_download_limit, 0) ELSE 0 END AS excel_download_limit,
 
           /* Feature Permissions */
           COALESCE(sp.candidate_search, 0) AS candidate_search,
@@ -272,7 +278,12 @@ const RecruiterManagementModel = {
             FROM job_post jp 
             WHERE (jp.user_id = u.id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = u.id))
               AND (jp.is_closed = 0 OR jp.is_closed IS NULL)
-          ) AS active_jobs_count
+          ) AS active_jobs_count,
+          (
+            SELECT MAX(jp.created_at) 
+            FROM job_post jp 
+            WHERE (jp.user_id = u.id OR jp.user_id IN (SELECT sr.sub_recruiter_id FROM sub_recruiters sr WHERE sr.main_recruiter_id = u.id))
+          ) AS last_job_posted
 
         FROM users u
         LEFT JOIN hr_profiles hp ON u.id = hp.user_id
@@ -987,8 +998,8 @@ const RecruiterManagementModel = {
 
       await pool.query(`
         INSERT INTO admin_audit_logs (admin_id, action, target_type, target_id, old_value, new_value)
-        VALUES (?, 'Admin Reset Recruiter Password', 'recruiter', ?, NULL, 'Password reset successfully')
-      `, [adminId, String(recruiterId)]);
+        VALUES (?, 'Admin Reset Recruiter Password', 'recruiter', ?, NULL, ?)
+      `, [adminId, String(recruiterId), JSON.stringify({ status: "Password reset successfully" })]);
 
       return true;
     } catch (error) {
@@ -1103,6 +1114,79 @@ const RecruiterManagementModel = {
     try {
       const query = `UPDATE users SET auto_approve = ? WHERE id = ?`;
       await pool.query(query, [autoApprove ? 1 : 0, recruiterId]);
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  loginAsRecruiter: async (recruiterId) => {
+    try {
+      const [userRows] = await pool.query(
+        `SELECT u.id, u.first_name, u.last_name, u.phone_code, u.phone, u.email, u.organization, 
+                o.name AS organization_type, u.is_active, u.role_id, r.name AS role_name, 
+                COALESCE(h.profile_image, u.profile_image) AS profile_image, 
+                CASE WHEN u.is_email_verified = 1 THEN 1 ELSE 0 END AS is_email_verified, 
+                COALESCE(h.company_name, u.organization, 'Individual Recruiter') AS company_name,
+                h.id AS company_id,
+                h.website_url,
+                h.industry_type
+         FROM users AS u 
+         INNER JOIN role AS r ON u.role_id = r.id 
+         LEFT JOIN organization_type o ON u.organization_type_id = o.id 
+         LEFT JOIN hr_profiles h ON u.id = h.user_id
+         WHERE u.id = ? AND u.role_id = 3`,
+        [recruiterId]
+      );
+
+      if (!userRows || userRows.length === 0) {
+        throw new Error("Recruiter not found or user is not a valid recruiter account.");
+      }
+
+      const recruiter = userRows[0];
+
+      // Check sub-recruiter status
+      const [subRows] = await pool.query(
+        `SELECT sr.id, sr.main_recruiter_id, sr.designation, sr.role_preset, sr.permissions, sr.status,
+                hp.company_name
+         FROM sub_recruiters sr
+         LEFT JOIN hr_profiles hp ON sr.main_recruiter_id = hp.user_id
+         WHERE sr.sub_recruiter_id = ? AND sr.status = 'active'
+         LIMIT 1`,
+        [recruiter.id]
+      );
+
+      if (subRows && subRows.length > 0) {
+        let perms = subRows[0].permissions;
+        if (typeof perms === 'string') {
+          try { perms = JSON.parse(perms); } catch (e) { perms = {}; }
+        }
+        recruiter.is_sub_recruiter = true;
+        recruiter.sub_recruiter_info = {
+          id: subRows[0].id,
+          main_recruiter_id: subRows[0].main_recruiter_id,
+          designation: subRows[0].designation,
+          role_preset: subRows[0].role_preset,
+          permissions: perms,
+          company_name: subRows[0].company_name
+        };
+      }
+
+      recruiter.impersonated_by_admin = true;
+
+      // Update recruiter last active
+      await pool.query(`UPDATE users SET last_active = NOW() WHERE id = ?`, [recruiter.id]).catch(() => {});
+
+      // Sign JWT token
+      const token = jwt.sign(
+        { id: recruiter.id, email: recruiter.email, role_id: recruiter.role_id, impersonated: true },
+        process.env.JWT_SECRET,
+        { expiresIn: "1d" }
+      );
+
+      return {
+        token,
+        recruiter
+      };
     } catch (error) {
       throw error;
     }

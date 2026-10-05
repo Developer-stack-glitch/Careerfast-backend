@@ -8,7 +8,8 @@ const SubRecruiterModel = {
       // 1. Get plan quota and pool metrics for this recruiter
       const [subRows] = await pool.query(
         `SELECT rs.id as subscription_id, rs.plan_id, rs.status,
-                sp.name as plan_name, COALESCE(sp.sub_recruiter_limit, 1) as sub_recruiter_limit,
+                sp.name as plan_name, sp.plan_type, sp.slug as plan_slug,
+                COALESCE(sp.sub_recruiter_limit, 0) as sub_recruiter_limit,
                 COALESCE(sp.job_post_limit, 0) as job_post_limit,
                 COALESCE(sp.resume_view_limit, 0) as resume_view_limit,
                 COALESCE(sp.resume_download_limit, 0) as resume_download_limit,
@@ -26,10 +27,41 @@ const SubRecruiterModel = {
         [mainRecruiterId]
       );
 
-      const planQuota = subRows[0]?.sub_recruiter_limit ?? 1;
+      const isCustomPlan = Boolean(
+        subRows[0]?.is_custom ||
+        subRows[0]?.plan_type === 'custom' ||
+        subRows[0]?.plan_type === 'Custom' ||
+        subRows[0]?.plan_slug?.startsWith('custom') ||
+        subRows[0]?.plan_name?.toLowerCase().includes('custom')
+      );
+
+      const planQuota = isCustomPlan ? (subRows[0]?.sub_recruiter_limit ?? 0) : 0;
       const companyName = subRows[0]?.company_name || 'Company';
       const companyId = subRows[0]?.company_id || null;
-      const planName = subRows[0]?.plan_name || 'Free';
+      const planName = subRows[0]?.plan_name || 'Basic';
+
+      if (!isCustomPlan) {
+        return {
+          team: [],
+          is_custom: false,
+          has_team_access: false,
+          stats: {
+            sub_recruiter_limit: 0,
+            total_members: 0,
+            active_members: 0,
+            remaining_seats: 0,
+            company_id: companyId,
+            company_name: companyName,
+            plan_name: planName,
+            is_custom: false,
+            pool: {
+              job_posts: { total: 0, used: 0, remaining_pool: 0, allocated_to_team: 0, unallocated: 0 },
+              resume_views: { total: 0, used: 0, remaining_pool: 0, allocated_to_team: 0, unallocated: 0 },
+              resume_downloads: { total: 0, used: 0, remaining_pool: 0, allocated_to_team: 0, unallocated: 0 }
+            }
+          }
+        };
+      }
 
       const poolLimits = {
         job_post_limit: Number(subRows[0]?.job_post_limit || 0),
@@ -195,9 +227,9 @@ const SubRecruiterModel = {
         throw new Error("First name, email, and password are required.");
       }
 
-      // 1. Verify Seat Quota
+      // 1. Verify Seat Quota and Custom Plan
       const [subRows] = await connection.query(
-        `SELECT sp.sub_recruiter_limit
+        `SELECT sp.sub_recruiter_limit, sp.plan_type, sp.slug as plan_slug, sp.name as plan_name
          FROM recruiter_subscriptions rs
          JOIN subscription_plans sp ON rs.plan_id = sp.id
          WHERE rs.recruiter_id = ?
@@ -206,7 +238,18 @@ const SubRecruiterModel = {
         [mainRecruiterId]
       );
 
-      const limit = subRows[0]?.sub_recruiter_limit ?? 1;
+      const isCustomPlan = Boolean(
+        subRows[0]?.plan_type === 'custom' ||
+        subRows[0]?.plan_type === 'Custom' ||
+        subRows[0]?.plan_slug?.startsWith('custom') ||
+        subRows[0]?.plan_name?.toLowerCase().includes('custom')
+      );
+
+      if (!isCustomPlan) {
+        throw new Error("Sub-recruiter team seats are exclusive to Custom Plans assigned by the Super Admin. Please upgrade your plan.");
+      }
+
+      const limit = subRows[0]?.sub_recruiter_limit ?? 0;
 
       const [existingCountRows] = await connection.query(
         `SELECT COUNT(*) as count FROM sub_recruiters WHERE main_recruiter_id = ?`,
@@ -215,7 +258,7 @@ const SubRecruiterModel = {
 
       const existingCount = existingCountRows[0]?.count || 0;
       if (existingCount >= limit) {
-        throw new Error(`Team seat limit reached (${limit} seats allowed under current plan). Upgrade plan to add more recruiters.`);
+        throw new Error(`Team seat limit reached (${limit} seats allowed under your Custom plan). Contact Super Admin to add more seats.`);
       }
 
       // 2. Check if email already exists

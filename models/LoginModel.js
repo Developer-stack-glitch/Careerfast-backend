@@ -26,18 +26,32 @@ const LoginModel = {
         throw new Error("You are not allowed to login");
       }
 
-      const query = `SELECT id, password FROM users WHERE email = ? AND is_active = 1`;
+      const query = `SELECT id, password, is_active FROM users WHERE email = ?`;
       const [isExists] = await pool.query(query, [email]);
       if (isExists.length == 0) throw new Error("Invalid email and password");
       const isMatch = await verifyPassword(password, isExists[0].password);
       if (!isMatch) throw new Error("Invalid email and password");
+      const isUserActive = (val) => {
+        if (val === null || val === undefined) return false;
+        if (Buffer.isBuffer(val)) return val[0] === 1;
+        return Number(val) === 1 || val === true || val === '1';
+      };
+
+      if (!isUserActive(isExists[0].is_active)) {
+        throw new Error("Your recruiter account has been suspended. Please contact the administrator.");
+      }
       const [result] = await pool.query(
-        `SELECT u.id, u.first_name, u.last_name, u.phone_code, u.phone, u.email, u.password, u.organization, o.name AS organization_type, u.is_active, u.role_id, r.name AS role_name, COALESCE(h.profile_image, u.profile_image) AS profile_image, CASE WHEN u.is_email_verified = 1 THEN 1 ELSE 0 END AS is_email_verified 
+        `SELECT u.id, u.first_name, u.last_name, u.phone_code, u.phone, u.email, u.password, u.organization, o.name AS organization_type, u.is_active, u.role_id, r.name AS role_name, COALESCE(h.profile_image, u.profile_image) AS profile_image, CASE WHEN u.is_email_verified = 1 THEN 1 ELSE 0 END AS is_email_verified,
+         COALESCE(ap.is_super_admin, CASE WHEN u.id = 1 THEN 1 ELSE 0 END) AS is_super_admin,
+         COALESCE(ap.role_title, 'Administrator') AS admin_role_title,
+         COALESCE(ap.department, 'Management') AS admin_department,
+         ap.permissions AS admin_permissions
          FROM users AS u 
          INNER JOIN role AS r ON u.role_id = r.id 
          LEFT JOIN organization_type o ON u.organization_type_id = o.id 
          LEFT JOIN hr_profiles h ON u.id = h.user_id
-         WHERE u.id = ? AND u.is_active = 1`,
+         LEFT JOIN admin_permissions ap ON u.id = ap.user_id
+         WHERE u.id = ?`,
         isExists[0].id
       );
 

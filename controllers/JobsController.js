@@ -270,10 +270,9 @@ const jobPosting = async (request, response) => {
     const recruiterUserId = user_id || request.user?.id;
     let activeUsageRecordId = null;
     let subRecruiterRecord = null;
+    let effectiveRecruiterId = recruiterUserId || user_id;
 
     if (recruiterUserId) {
-      let effectiveRecruiterId = recruiterUserId;
-
       // 🛡️ Check if this user is a Sub-Recruiter
       subRecruiterRecord = await SubRecruiterModel.getSubRecruiterByUserId(recruiterUserId);
       if (subRecruiterRecord) {

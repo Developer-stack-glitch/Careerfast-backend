@@ -21,17 +21,45 @@ const verifyToken = (req, res, next) => {
   }
 
   // Verify the token
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+  jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
     if (err) {
       return res.status(401).json({ message: "Unauthorized! Invalid token" });
     }
 
-    // If token is valid, store user info in the request and move to the next middleware
-    req.user = decoded;
-    if (decoded && decoded.id) {
-      pool.query("UPDATE users SET last_active = NOW() WHERE id = ?", [decoded.id]).catch(() => {});
+    try {
+      if (decoded && decoded.id) {
+        const [rows] = await pool.query(
+          "SELECT id, email, role_id, is_active FROM users WHERE id = ?",
+          [decoded.id]
+        );
+        if (rows.length === 0) {
+          return res.status(401).json({ message: "User account not found." });
+        }
+        const user = rows[0];
+        const isUserActive = (val) => {
+          if (val === null || val === undefined) return false;
+          if (Buffer.isBuffer(val)) return val[0] === 1;
+          return Number(val) === 1 || val === true || val === '1';
+        };
+
+        if (!isUserActive(user.is_active)) {
+          return res.status(403).json({
+            success: false,
+            account_suspended: true,
+            message: "Your account has been suspended. Please contact the administrator.",
+          });
+        }
+        req.user = { ...decoded, ...user };
+        pool.query("UPDATE users SET last_active = NOW() WHERE id = ?", [decoded.id]).catch(() => {});
+      } else {
+        req.user = decoded;
+      }
+      next();
+    } catch (dbErr) {
+      console.error("verifyToken DB verification error:", dbErr.message);
+      req.user = decoded;
+      next();
     }
-    next();
   });
 };
 
