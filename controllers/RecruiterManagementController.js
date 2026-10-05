@@ -287,6 +287,25 @@ const RecruiterManagementController = {
         details: error.message
       });
     }
+  },
+
+  deleteRecruiter: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const adminId = req.user?.id || 1;
+      await RecruiterManagementModel.deleteRecruiter(id, adminId);
+      res.status(200).json({
+        success: true,
+        message: "Recruiter account deleted successfully."
+      });
+    } catch (error) {
+      console.error("Error deleting recruiter:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to delete recruiter account.",
+        details: error.message
+      });
+    }
   }
 };
 

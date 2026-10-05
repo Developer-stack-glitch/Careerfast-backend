@@ -1190,6 +1190,29 @@ const RecruiterManagementModel = {
     } catch (error) {
       throw error;
     }
+  },
+
+  deleteRecruiter: async (id, adminId) => {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      await connection.query("DELETE FROM recruiter_audit_logs WHERE recruiter_id = ?", [id]).catch(() => {});
+      await connection.query("DELETE FROM subscription_usage WHERE recruiter_id = ?", [id]).catch(() => {});
+      await connection.query("DELETE FROM recruiter_subscriptions WHERE recruiter_id = ?", [id]).catch(() => {});
+      await connection.query("DELETE FROM sub_recruiters WHERE main_recruiter_id = ? OR sub_recruiter_id = ?", [id, id]).catch(() => {});
+      await connection.query("DELETE FROM hr_profile WHERE user_id = ?", [id]).catch(() => {});
+      await connection.query("DELETE FROM hr_profiles WHERE user_id = ?", [id]).catch(() => {});
+      await connection.query("DELETE FROM users WHERE id = ?", [id]);
+
+      await connection.commit();
+      return true;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
   }
 };
 

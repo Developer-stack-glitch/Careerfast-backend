@@ -65,6 +65,7 @@ router.put("/admin/recruiters/:id/status", verifyToken, verifySuperAdmin, Recrui
 router.post("/admin/recruiters/:id/reset-password", verifyToken, verifySuperAdmin, RecruiterManagementController.resetPassword);
 router.put("/admin/recruiters/:id/auto-approve", verifyToken, verifySuperAdmin, RecruiterManagementController.toggleAutoApprove);
 router.post("/admin/recruiters/:id/login-as", verifyToken, verifySuperAdmin, RecruiterManagementController.loginAsRecruiter);
+router.delete("/admin/recruiters/:id", verifyToken, verifySuperAdmin, RecruiterManagementController.deleteRecruiter);
 router.get("/admin/subscriptions", verifyToken, verifySuperAdmin, RecruiterManagementController.getAllSubscriptions);
 router.get("/admin/audit-logs", verifyToken, verifySuperAdmin, RecruiterManagementController.getAuditLogs);
 
