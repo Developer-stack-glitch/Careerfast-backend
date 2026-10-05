@@ -3047,7 +3047,7 @@ const JobsModel = {
         `),
         pool.query(`
           SELECT jp.id, jp.job_title, jp.company_name, jp.job_nature, jp.workplace_type, jp.openings, jp.created_at, jp.user_id, jp.company_logo,
-                 jp.work_location, jp.is_closed, jp.approval_status, jp.min_salary, jp.max_salary, jp.salary_type, jp.currency, jp.experience_type,
+                 jp.work_location, CASE WHEN jp.is_closed = 1 THEN 1 ELSE 0 END AS is_closed, jp.approval_status, jp.min_salary, jp.max_salary, jp.salary_type, jp.currency, jp.experience_type,
                  CONCAT(u.first_name, ' ', u.last_name) AS recruiter_name, u.email AS recruiter_email, u.profile_image
           FROM job_post jp
           LEFT JOIN users u ON jp.user_id = u.id
