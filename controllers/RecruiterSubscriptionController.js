@@ -234,9 +234,9 @@ const RecruiterSubscriptionController = {
       );
 
       const permissionsObj = {
-        candidate_search: isCustomPlan && Boolean(sub.candidate_search) && !isExpired && !isSuspended,
-        candidate_contact: isCustomPlan && Boolean(sub.candidate_contact) && !isExpired && !isSuspended,
-        resume_database: isCustomPlan && Boolean(sub.resume_database) && !isExpired && !isSuspended,
+        candidate_search: isCustomPlan && !isExpired && !isSuspended && sub.candidate_search !== 0,
+        candidate_contact: isCustomPlan && !isExpired && !isSuspended && sub.candidate_contact !== 0,
+        resume_database: isCustomPlan && !isExpired && !isSuspended && sub.resume_database !== 0,
         interview_management: Boolean(sub.interview_management),
         application_management: Boolean(sub.application_management),
         shortlisting: Boolean(sub.shortlisting),

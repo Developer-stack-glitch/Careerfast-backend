@@ -875,16 +875,23 @@ const RecruiterManagementModel = {
       if (subRows.length === 0) {
         throw new Error("No active subscription found for this recruiter.");
       }
-      const currentSub = subRows[0];
-      const customPlanName = `Custom Plan - User ${recruiterId}`;
-      const customSlug = `custom-user-${recruiterId}-${Date.now()}`;
+      const isOnlyJobPost = limits.plan_scope === 'only_job_post' || limits.is_only_job_post === true;
+      const customPlanName = isOnlyJobPost 
+        ? `Only Job Post - User ${recruiterId}` 
+        : `Custom Plan - User ${recruiterId}`;
+      const customSlug = `${isOnlyJobPost ? 'only-job-post' : 'custom'}-user-${recruiterId}-${Date.now()}`;
 
       let customPlanId;
 
-      if (currentSub.plan_type === 'Custom' && currentSub.plan_id) {
-        // Update the existing custom plan limits
+      if ((currentSub.plan_type === 'Custom' || currentSub.plan_name?.toLowerCase().includes('custom') || currentSub.plan_name?.toLowerCase().includes('only job post')) && currentSub.plan_id) {
+        // Update the existing custom plan limits and name
         await connection.query(
           `UPDATE subscription_plans SET 
+            name = ?,
+            plan_type = 'Custom',
+            candidate_search = 1,
+            candidate_contact = 1,
+            resume_database = 1,
             job_post_limit = ?,
             active_job_limit = ?,
             featured_job_limit = ?,
@@ -897,6 +904,7 @@ const RecruiterManagementModel = {
             excel_download_limit = ?
            WHERE id = ?`,
           [
+            customPlanName,
             limits.job_post_limit || 0,
             limits.active_job_limit || 0,
             limits.featured_job_limit || 0,
@@ -914,13 +922,14 @@ const RecruiterManagementModel = {
       } else {
         // 2. We will create a new 'Custom' plan in subscription_plans with unique slug
         const insertPlanQuery = `
-          INSERT INTO subscription_plans (name, slug, description, plan_type, job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, resume_view_limit, resume_download_limit, sub_recruiter_limit, email_limit, whatsapp_limit, excel_download_limit, validity_days, price, status)
-          VALUES (?, ?, 'Custom plan configured by administrator', 'Custom', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30, 0, 1)
+          INSERT INTO subscription_plans (name, slug, description, plan_type, candidate_search, candidate_contact, resume_database, job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, resume_view_limit, resume_download_limit, sub_recruiter_limit, email_limit, whatsapp_limit, excel_download_limit, validity_days, price, status)
+          VALUES (?, ?, ?, 'Custom', 1, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30, 0, 1)
         `;
         
         const [planResult] = await connection.query(insertPlanQuery, [
           customPlanName,
           customSlug,
+          isOnlyJobPost ? 'Only job posting plan configured by administrator' : 'Custom plan configured by administrator',
           limits.job_post_limit || 0,
           limits.active_job_limit || 0,
           limits.featured_job_limit || 0,
