@@ -875,6 +875,7 @@ const RecruiterManagementModel = {
       if (subRows.length === 0) {
         throw new Error("No active subscription found for this recruiter.");
       }
+      const currentSub = subRows[0];
       const isOnlyJobPost = limits.plan_scope === 'only_job_post' || limits.is_only_job_post === true;
       const customPlanName = isOnlyJobPost 
         ? `Only Job Post - User ${recruiterId}` 
