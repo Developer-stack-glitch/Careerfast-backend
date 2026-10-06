@@ -352,7 +352,7 @@ const jobPosting = async (request, response) => {
 
         // 2. Monthly job posting limit check (20 jobs per month / 30-day billing period)
         const [monthlyJobRows] = await pool.query(
-          `SELECT COUNT(*) as count FROM job_post WHERE user_id IN (?) AND created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+          `SELECT COUNT(*) as count FROM job_post WHERE user_id IN (?) AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
           [companyUids]
         );
         const companyMonthlyJobs = Number(monthlyJobRows[0]?.count || 0);
