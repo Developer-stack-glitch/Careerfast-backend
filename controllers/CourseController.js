@@ -42,10 +42,7 @@ const getCourses = async (req, res) => {
                 let parsedContent = null;
                 if (course.content) {
                     try {
-                        const raw = typeof course.content === 'string' ? JSON.parse(course.content) : course.content;
-                        // Strip heavy base64 blobs (tools, careerSection) for list views to keep payload under 100KB instead of 6.5MB
-                        const { tools, careerSection, ...lightContent } = raw || {};
-                        parsedContent = lightContent;
+                        parsedContent = typeof course.content === 'string' ? JSON.parse(course.content) : course.content;
                     } catch (e) {
                         console.error("JSON Parse Error for course ID", course.id, e);
                     }
@@ -71,19 +68,25 @@ const getCourses = async (req, res) => {
 const getCourseBySlug = async (req, res) => {
     try {
         const { slug } = req.params;
-        const result = await CourseModel.getBySlug(slug);
-        if (result.success) {
+        let result = null;
+        if (!isNaN(slug)) {
+            result = await CourseModel.getById(slug);
+        }
+        if (!result || !result.success) {
+            result = await CourseModel.getBySlug(slug);
+        }
+        if (result && result.success) {
             const course = result.data;
             if (course.content) {
                 try {
                     course.content = typeof course.content === 'string' ? JSON.parse(course.content) : course.content;
                 } catch (e) {
-                    console.error("JSON Parse Error for course slug", slug, e);
+                    console.error("JSON Parse Error for course identifier", slug, e);
                 }
             }
             res.status(200).json(course);
         } else {
-            res.status(404).json({ error: result.message });
+            res.status(404).json({ error: "Course not found" });
         }
     } catch (error) {
         res.status(500).json({
