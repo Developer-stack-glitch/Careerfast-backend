@@ -73,6 +73,9 @@ router.get("/admin/audit-logs", verifyToken, verifySuperAdmin, RecruiterManageme
 // 🛡️ Super Admin User & Role Management Routes
 // ==========================================
 const AdminUserController = require("../controllers/AdminUserController");
+const AdminRoleController = require("../controllers/AdminRoleController");
+
+// Admin Users
 router.get("/admin/users", verifyToken, verifySuperAdmin, AdminUserController.getAllAdminUsers);
 router.get("/admin/users/:id", verifyToken, verifySuperAdmin, AdminUserController.getAdminUserById);
 router.post("/admin/users", verifyToken, verifySuperAdmin, AdminUserController.createAdminUser);
@@ -80,6 +83,13 @@ router.put("/admin/users/:id", verifyToken, verifySuperAdmin, AdminUserControlle
 router.put("/admin/users/:id/status", verifyToken, verifySuperAdmin, AdminUserController.toggleAdminStatus);
 router.post("/admin/users/:id/reset-password", verifyToken, verifySuperAdmin, AdminUserController.resetAdminPassword);
 router.delete("/admin/users/:id", verifyToken, verifySuperAdmin, AdminUserController.deleteAdminUser);
+
+// Dynamic Admin Roles & Permissions
+router.get("/admin/roles", verifyToken, verifySuperAdmin, AdminRoleController.getAllRoles);
+router.get("/admin/roles/:id", verifyToken, verifySuperAdmin, AdminRoleController.getRoleById);
+router.post("/admin/roles", verifyToken, verifySuperAdmin, AdminRoleController.createRole);
+router.put("/admin/roles/:id", verifyToken, verifySuperAdmin, AdminRoleController.updateRole);
+router.delete("/admin/roles/:id", verifyToken, verifySuperAdmin, AdminRoleController.deleteRole);
 
 // ==========================================
 // 👥 Recruiter Team & Sub-Recruiter Routes

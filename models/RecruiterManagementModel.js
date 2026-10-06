@@ -26,7 +26,7 @@ const RecruiterManagementModel = {
           CAST(u.is_active AS UNSIGNED) AS user_active,
           u.created_date AS recruiter_created_date,
           COALESCE(u.last_active, u.updated_date, u.created_date) AS last_active,
-          u.auto_approve,
+          CAST(COALESCE(u.auto_approve, 0) AS UNSIGNED) AS auto_approve,
 
           hp.id AS company_id,
           COALESCE(hp.company_name, u.organization, 'Individual Recruiter') AS company_name,
@@ -184,6 +184,7 @@ const RecruiterManagementModel = {
           u.email,
           u.phone,
           CAST(u.is_active AS UNSIGNED) AS user_active,
+          CAST(COALESCE(u.auto_approve, 0) AS UNSIGNED) AS auto_approve,
           u.created_date,
           COALESCE(u.last_active, u.updated_date, u.created_date) AS last_active,
           u.profile_image AS user_avatar,
