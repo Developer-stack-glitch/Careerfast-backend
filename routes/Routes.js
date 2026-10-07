@@ -383,6 +383,19 @@ router.delete("/hr/dashboard/searches/:id", HrDashboardController.deleteSearch);
 router.get("/hr/dashboard/campaigns", HrDashboardController.getCampaigns);
 router.get("/hr/dashboard/credits", HrDashboardController.getCredits);
 
+// ==========================================
+// 🎫 Support Ticket Routes
+// ==========================================
+const SupportTicketController = require("../controllers/SupportTicketController");
+router.post("/support/tickets", SupportTicketController.createTicket);
+router.get("/support/tickets", SupportTicketController.getAllTickets);
+router.get("/support/tickets/stats", SupportTicketController.getStats);
+router.get("/support/tickets/:id", SupportTicketController.getTicketById);
+router.put("/support/tickets/:id/status", SupportTicketController.updateStatus);
+router.post("/support/tickets/:id/messages", SupportTicketController.addMessage);
+router.delete("/support/tickets/:id", SupportTicketController.deleteTicket);
+
 module.exports = router;
+
 
 

@@ -105,6 +105,14 @@ async function ensureDatabaseIndexes() {
     await ensureColumn("subscription_usage", "whatsapp_used", "INT NOT NULL DEFAULT 0");
     await ensureColumn("subscription_usage", "excel_downloads_used", "INT NOT NULL DEFAULT 0");
 
+    // Initialize Support Tickets tables and demo data if needed
+    try {
+      const SupportTicketModel = require("../models/SupportTicketModel");
+      await SupportTicketModel.initTable();
+    } catch (ticketErr) {
+      console.warn("⚠️ [Support Tickets] Init check:", ticketErr.message);
+    }
+
     console.log("✅ [DB Index] Database search indexes and schemas verified successfully");
   } catch (error) {
     console.warn("⚠️ [DB Index] Index verification warning:", error.message);
@@ -112,3 +120,4 @@ async function ensureDatabaseIndexes() {
 }
 
 module.exports = ensureDatabaseIndexes;
+
