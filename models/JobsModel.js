@@ -583,15 +583,24 @@ const JobsModel = {
 
   applyForJob: async (postId, userId, answers) => {
     try {
+      const checkQuery = `SELECT id FROM applied_jobs WHERE postId = ? AND userId = ? LIMIT 1`;
+      const [existing] = await pool.query(checkQuery, [postId, userId]);
+      if (existing.length > 0) {
+        return { affectedRows: 1, id: existing[0].id, alreadyApplied: true };
+      }
+
       const query = `INSERT INTO applied_jobs(postId, userId, created_at) VALUES (?, ?, NOW())`;
       const values = [postId, userId];
 
       const [result] = await pool.query(query, values);
 
-      if (answers && answers.length >= 1) {
+      if (answers && Array.isArray(answers) && answers.length >= 1) {
         const query = `INSERT INTO job_post_answers (postId, userId, questionId, answer, created_at) VALUES ?`;
-        const insertValues = answers.map((item) => [postId, userId, item.questionId, item.answer, new Date()]);
-        await pool.query(query, [insertValues]);
+        const validAnswers = answers.filter(item => item && item.questionId);
+        if (validAnswers.length > 0) {
+          const insertValues = validAnswers.map((item) => [postId, userId, item.questionId, item.answer || '', new Date()]);
+          await pool.query(query, [insertValues]);
+        }
       }
       return result.affectedRows;
     } catch (error) {
@@ -1243,9 +1252,11 @@ const JobsModel = {
         }
       }
 
-      // job nature filter
-      if (filters.job_nature) {
-        whereClauses.push(`LOWER(job_nature) = LOWER(?)`);
+      // job nature / walk-in filter
+      if (filters.is_walk_in || (filters.job_nature && filters.job_nature.toLowerCase().includes('walk'))) {
+        whereClauses.push(`(job_post.is_walk_in = 1 OR LOWER(job_post.job_nature) LIKE '%walk%')`);
+      } else if (filters.job_nature) {
+        whereClauses.push(`LOWER(job_post.job_nature) = LOWER(?)`);
         queryParams.push(filters.job_nature);
       }
 
@@ -1274,12 +1285,35 @@ const JobsModel = {
         if (workLocations.length > 0) {
           whereClauses.push(`(
             ${workLocations
-              .map(() => `JSON_SEARCH(LOWER(IF(JSON_VALID(work_location), work_location, '[]')), 'one', ?) IS NOT NULL`)
+              .map(() => `(JSON_SEARCH(LOWER(IF(JSON_VALID(work_location), work_location, '[]')), 'one', ?) IS NOT NULL OR LOWER(work_location) LIKE ?)`)
               .join(" OR ")}
           )`);
 
           workLocations.forEach((loc) => {
-            queryParams.push(loc.toLowerCase());
+            const l = loc.toLowerCase();
+            queryParams.push(l, `%${l}%`);
+          });
+        }
+      }
+
+      // Diversity hiring / Gender filter
+      if (filters.diversity_hiring) {
+        let diversityList = Array.isArray(filters.diversity_hiring)
+          ? filters.diversity_hiring
+          : [filters.diversity_hiring];
+
+        diversityList = diversityList.filter(d => d && String(d).trim() !== "");
+
+        if (diversityList.length > 0) {
+          whereClauses.push(`(
+            ${diversityList
+              .map(() => `(JSON_SEARCH(LOWER(IF(JSON_VALID(diversity_hiring), diversity_hiring, '[]')), 'one', ?) IS NOT NULL OR LOWER(diversity_hiring) LIKE ? OR JSON_SEARCH(LOWER(IF(JSON_VALID(diversity_hiring), diversity_hiring, '[]')), 'one', 'any') IS NOT NULL OR LOWER(diversity_hiring) LIKE '%any%')`)
+              .join(" OR ")}
+          )`);
+
+          diversityList.forEach((div) => {
+            const d = div.toLowerCase();
+            queryParams.push(d, `%${d}%`);
           });
         }
       }

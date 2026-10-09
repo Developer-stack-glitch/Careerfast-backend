@@ -1,13 +1,62 @@
-// const { use } = require("react");
 const JobsModel = require("../models/JobsModel");
 const { response, request } = require("express");
 const cities = require("cities");
 const admin = require("../config/firebase");
 const pool = require("../config/dbConfig");
 const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
 const UserModel = require("../models/UserModel");
 const EmailModel = require("../models/EmailModel");
 const SubRecruiterModel = require("../models/SubRecruiterModel");
+
+const verifyJobPreviewToken = (jobId, token, authHeader) => {
+  if (!jobId) return false;
+
+  const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+  const tokenToVerify = token || bearerToken;
+
+  if (tokenToVerify) {
+    // 1. Check if token is a valid admin/recruiter JWT
+    try {
+      const decoded = jwt.verify(tokenToVerify, process.env.JWT_SECRET || 'careerfast_secret_key');
+      if (decoded && (decoded.role_id === 1 || decoded.role === 'admin' || decoded.is_admin || decoded.role_id === 2 || decoded.role_id === 3 || decoded.id)) {
+        return true;
+      }
+    } catch (_) {}
+
+    // 2. Check if token is a signed preview token
+    try {
+      let decodedStr = '';
+      try {
+        decodedStr = Buffer.from(tokenToVerify, 'base64url').toString('utf8');
+      } catch (_) {
+        try {
+          decodedStr = Buffer.from(tokenToVerify, 'base64').toString('utf8');
+        } catch (_) {}
+      }
+
+      if (decodedStr) {
+        const parsed = JSON.parse(decodedStr);
+        if (parsed && Number(parsed.id) === Number(jobId)) {
+          const secret = "careerfast_admin_preview_token_2026";
+          let hash = 0;
+          const str = `job_${jobId}_${secret}`;
+          for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash |= 0;
+          }
+          const expectedHex = Math.abs(hash).toString(16);
+          if (parsed.key === expectedHex) {
+            return true;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  return false;
+};
 
 const insertJobNature = async (request, response) => {
   const { nature_name } = request.body;
@@ -605,6 +654,10 @@ const getJobPosts = async (request, response) => {
   if (Array.isArray(body.workplace_type) && body.workplace_type.length > 0) filters.workplace_type = body.workplace_type;
   if (Array.isArray(body.work_location) && body.work_location.length > 0) filters.work_location = body.work_location;
   if (Array.isArray(body.job_categories) && body.job_categories.length > 0) filters.job_categories = body.job_categories;
+  if (Array.isArray(body.diversity_hiring) && body.diversity_hiring.length > 0) filters.diversity_hiring = body.diversity_hiring;
+  else if (Array.isArray(body.gender) && body.gender.length > 0) filters.diversity_hiring = body.gender;
+  else if (body.diversity_hiring) filters.diversity_hiring = [body.diversity_hiring];
+  else if (body.gender) filters.diversity_hiring = [body.gender];
   if (body.experience_type) filters.experience_type = body.experience_type;
   if (body.searchTerm) filters.searchTerm = body.searchTerm;
   if (Array.isArray(body.companies) && body.companies.length > 0) filters.companies = body.companies;
@@ -613,9 +666,12 @@ const getJobPosts = async (request, response) => {
   if (body.admin_user_id) filters.admin_user_id = body.admin_user_id;
 
   // By default, public API should only return approved jobs
-  // Skip approval_status filter when previewing a specific job by ID, when approval_status is 'all', or when include_stats is true
-  if (body.preview === true && body.id) {
-    // Don't set approval_status filter - allow fetching any job by ID for preview
+  // Check if this is an authorized admin/recruiter preview with valid token
+  const hasValidPreview = (body.preview === true || body.preview_token) && body.id && verifyJobPreviewToken(body.id, body.preview_token, request.headers["authorization"]);
+
+  if (hasValidPreview) {
+    // Authorized preview: bypass approval_status filter
+    delete filters.approval_status;
   } else if (body.approval_status === 'all') {
     delete filters.approval_status;
   } else if (body.approval_status) {

@@ -64,6 +64,7 @@ const RecruiterManagementModel = {
           CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.email_limit, 0) ELSE 0 END AS email_limit,
           CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.whatsapp_limit, 0) ELSE 0 END AS whatsapp_limit,
           CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.excel_download_limit, 0) ELSE 0 END AS excel_download_limit,
+          COALESCE(sp.master_login_limit, 1) AS master_login_limit,
 
           /* Real-time Usage */
           GREATEST(
@@ -237,6 +238,7 @@ const RecruiterManagementModel = {
           CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.email_limit, 0) ELSE 0 END AS email_limit,
           CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.whatsapp_limit, 0) ELSE 0 END AS whatsapp_limit,
           CASE WHEN sp.plan_type = 'custom' OR sp.name LIKE '%Custom%' THEN COALESCE(sp.excel_download_limit, 0) ELSE 0 END AS excel_download_limit,
+          COALESCE(sp.master_login_limit, 1) AS master_login_limit,
 
           /* Feature Permissions */
           COALESCE(sp.candidate_search, 0) AS candidate_search,
@@ -496,8 +498,8 @@ const RecruiterManagementModel = {
           const customSlug = `custom-user-${newUserId}-${Date.now()}`;
           const limits = custom_limits || {};
           const insertPlanQuery = `
-            INSERT INTO subscription_plans (name, slug, description, plan_type, job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, resume_view_limit, resume_download_limit, sub_recruiter_limit, email_limit, whatsapp_limit, excel_download_limit, validity_days, price, status)
-            VALUES (?, ?, 'Custom plan configured by administrator', 'Custom', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30, 0, 1)
+            INSERT INTO subscription_plans (name, slug, description, plan_type, job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, resume_view_limit, resume_download_limit, sub_recruiter_limit, master_login_limit, email_limit, whatsapp_limit, excel_download_limit, validity_days, price, status)
+            VALUES (?, ?, 'Custom plan configured by administrator', 'Custom', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30, 0, 1)
           `;
           const [planResult] = await connection.query(insertPlanQuery, [
             customPlanName,
@@ -509,6 +511,7 @@ const RecruiterManagementModel = {
             limits.resume_view_limit || 0,
             limits.resume_download_limit || 0,
             limits.sub_recruiter_limit || 1,
+            limits.master_login_limit !== undefined ? (Number(limits.master_login_limit) || 1) : 1,
             limits.email_sent_count !== undefined ? (Number(limits.email_sent_count) || 0) : (Number(limits.email_limit) || 0),
             limits.whatsapp_message_count !== undefined ? (Number(limits.whatsapp_message_count) || 0) : (limits.whatsapp_sent_count !== undefined ? (Number(limits.whatsapp_sent_count) || 0) : (Number(limits.whatsapp_limit) || 0)),
             limits.excel_download_count !== undefined ? (Number(limits.excel_download_count) || 0) : (limits.excel_downloads_limit !== undefined ? (Number(limits.excel_downloads_limit) || 0) : (Number(limits.excel_download_limit) || 0))
@@ -901,6 +904,7 @@ const RecruiterManagementModel = {
             resume_view_limit = ?,
             resume_download_limit = ?,
             sub_recruiter_limit = ?,
+            master_login_limit = ?,
             email_limit = ?,
             whatsapp_limit = ?,
             excel_download_limit = ?
@@ -914,6 +918,7 @@ const RecruiterManagementModel = {
             limits.resume_view_limit || 0,
             limits.resume_download_limit || 0,
             limits.sub_recruiter_limit || 1,
+            limits.master_login_limit !== undefined ? (Number(limits.master_login_limit) || 1) : 1,
             limits.email_sent_count !== undefined ? (Number(limits.email_sent_count) || 0) : (Number(limits.email_limit) || 0),
             limits.whatsapp_message_count !== undefined ? (Number(limits.whatsapp_message_count) || 0) : (limits.whatsapp_sent_count !== undefined ? (Number(limits.whatsapp_sent_count) || 0) : (Number(limits.whatsapp_limit) || 0)),
             limits.excel_download_count !== undefined ? (Number(limits.excel_download_count) || 0) : (limits.excel_downloads_limit !== undefined ? (Number(limits.excel_downloads_limit) || 0) : (Number(limits.excel_download_limit) || 0)),
@@ -924,8 +929,8 @@ const RecruiterManagementModel = {
       } else {
         // 2. We will create a new 'Custom' plan in subscription_plans with unique slug
         const insertPlanQuery = `
-          INSERT INTO subscription_plans (name, slug, description, plan_type, candidate_search, candidate_contact, resume_database, job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, resume_view_limit, resume_download_limit, sub_recruiter_limit, email_limit, whatsapp_limit, excel_download_limit, validity_days, price, status)
-          VALUES (?, ?, ?, 'Custom', 1, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30, 0, 1)
+          INSERT INTO subscription_plans (name, slug, description, plan_type, candidate_search, candidate_contact, resume_database, job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, resume_view_limit, resume_download_limit, sub_recruiter_limit, master_login_limit, email_limit, whatsapp_limit, excel_download_limit, validity_days, price, status)
+          VALUES (?, ?, ?, 'Custom', 1, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30, 0, 1)
         `;
         
         const [planResult] = await connection.query(insertPlanQuery, [
@@ -939,6 +944,7 @@ const RecruiterManagementModel = {
           limits.resume_view_limit || 0,
           limits.resume_download_limit || 0,
           limits.sub_recruiter_limit || 1,
+          limits.master_login_limit !== undefined ? (Number(limits.master_login_limit) || 1) : 1,
           limits.email_sent_count !== undefined ? (Number(limits.email_sent_count) || 0) : (Number(limits.email_limit) || 0),
           limits.whatsapp_message_count !== undefined ? (Number(limits.whatsapp_message_count) || 0) : (limits.whatsapp_sent_count !== undefined ? (Number(limits.whatsapp_sent_count) || 0) : (Number(limits.whatsapp_limit) || 0)),
           limits.excel_download_count !== undefined ? (Number(limits.excel_download_count) || 0) : (limits.excel_downloads_limit !== undefined ? (Number(limits.excel_downloads_limit) || 0) : (Number(limits.excel_download_limit) || 0))
@@ -1041,6 +1047,7 @@ const RecruiterManagementModel = {
           sp.resume_view_limit,
           sp.resume_download_limit,
           sp.sub_recruiter_limit,
+          COALESCE(sp.master_login_limit, 1) AS master_login_limit,
 
           CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS recruiter_name,
           u.email AS recruiter_email,

@@ -15,6 +15,7 @@ const CandidateSearchModel = {
     try {
       const {
         search = "",
+        keywordWithinResults = "",
         keywordMatch = "any",
         skills = [],
         location = [],
@@ -121,6 +122,50 @@ const CandidateSearchModel = {
             queryParams.push(searchPattern);
           }
         });
+      }
+
+      // Keyword Within Results (Strict narrowing / intersection search within results)
+      if (keywordWithinResults && keywordWithinResults.trim()) {
+        const rawWithinTerms = keywordWithinResults.trim().split(/[\s,]+/);
+        const withinTerms = Array.from(new Set(rawWithinTerms.map(t => t.trim()).filter(Boolean)));
+        if (withinTerms.length > 0) {
+          const withinClauses = withinTerms.map(() => `(
+            u.first_name LIKE ? OR 
+            u.last_name LIKE ? OR 
+            CONCAT(u.first_name, ' ', u.last_name) LIKE ? OR
+            u.email LIKE ? OR 
+            u.phone LIKE ? OR 
+            u.location LIKE ? OR 
+            u.skills LIKE ? OR 
+            u.course LIKE ? OR 
+            u.about LIKE ? OR 
+            EXISTS (
+              SELECT 1 FROM user_professional up 
+              WHERE up.user_id = u.id AND up.is_deleted = 0 AND (
+                up.job_title LIKE ? OR 
+                up.company_name LIKE ? OR 
+                up.designation LIKE ? OR 
+                up.skills LIKE ?
+              )
+            ) OR 
+            EXISTS (
+              SELECT 1 FROM user_education ue 
+              WHERE ue.user_id = u.id AND ue.is_deleted = 0 AND (
+                ue.course LIKE ? OR 
+                ue.college LIKE ? OR 
+                ue.specialization LIKE ?
+              )
+            )
+          )`);
+
+          whereClauses.push(`(${withinClauses.join(' AND ')})`);
+          withinTerms.forEach(term => {
+            const pattern = `%${term}%`;
+            for (let i = 0; i < 16; i++) {
+              queryParams.push(pattern);
+            }
+          });
+        }
       }
 
       // Excluded Keywords

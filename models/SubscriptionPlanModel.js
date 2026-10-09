@@ -54,6 +54,7 @@ const SubscriptionPlanModel = {
         featured_job_limit = 0,
         urgent_job_limit = 0,
         sub_recruiter_limit = 1,
+        master_login_limit = 1,
         resume_view_limit = 50,
         resume_download_limit = 10,
         email_limit = 50,
@@ -82,16 +83,16 @@ const SubscriptionPlanModel = {
       const insertQuery = `
         INSERT INTO subscription_plans (
           name, slug, description, plan_type, price, currency, validity_days,
-          job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, sub_recruiter_limit,
+          job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, sub_recruiter_limit, master_login_limit,
           resume_view_limit, resume_download_limit, email_limit, whatsapp_limit, excel_download_limit, candidate_search, candidate_contact, resume_database,
           interview_management, application_management, shortlisting, company_profile, recruiter_dashboard, email_notifications, company_branding,
           status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       const values = [
         name, finalSlug, description, plan_type, price, currency, validity_days,
-        job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, sub_recruiter_limit,
+        job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, sub_recruiter_limit, master_login_limit,
         resume_view_limit, resume_download_limit, email_limit, whatsapp_limit, excel_download_limit,
         candidate_search ? 1 : 0,
         candidate_contact ? 1 : 0,
@@ -127,6 +128,7 @@ const SubscriptionPlanModel = {
         featured_job_limit,
         urgent_job_limit,
         sub_recruiter_limit,
+        master_login_limit,
         resume_view_limit,
         resume_download_limit,
         email_limit,
@@ -158,6 +160,7 @@ const SubscriptionPlanModel = {
           featured_job_limit = COALESCE(?, featured_job_limit),
           urgent_job_limit = COALESCE(?, urgent_job_limit),
           sub_recruiter_limit = COALESCE(?, sub_recruiter_limit),
+          master_login_limit = COALESCE(?, master_login_limit),
           resume_view_limit = COALESCE(?, resume_view_limit),
           resume_download_limit = COALESCE(?, resume_download_limit),
           email_limit = COALESCE(?, email_limit),
@@ -179,7 +182,7 @@ const SubscriptionPlanModel = {
 
       const values = [
         name, description, plan_type, price, currency, validity_days,
-        job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, sub_recruiter_limit,
+        job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, sub_recruiter_limit, master_login_limit,
         resume_view_limit, resume_download_limit, email_limit, whatsapp_limit, excel_download_limit,
         candidate_search !== undefined ? (candidate_search ? 1 : 0) : null,
         candidate_contact !== undefined ? (candidate_contact ? 1 : 0) : null,
@@ -277,6 +280,7 @@ const SubscriptionPlanModel = {
           sp.resume_view_limit,
           sp.resume_download_limit,
           sp.sub_recruiter_limit,
+          COALESCE(sp.master_login_limit, 1) AS master_login_limit,
           u.first_name,
           u.last_name,
           u.email AS recruiter_email,

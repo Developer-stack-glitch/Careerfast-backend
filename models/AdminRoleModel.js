@@ -1,57 +1,96 @@
 const pool = require('../config/dbConfig');
 
 const DEFAULT_PORTAL_MODULES = [
+  // ── DASHBOARD ──
   {
-    id: 'dashboard',
-    name: 'Executive Dashboard',
+    id: 'dashboard_recruiter',
+    group: 'DASHBOARD',
+    name: 'Recruiters Dashboard',
     actions: ['scoreboard_kpis', 'growth_trends', 'demographics_breakdown', 'recent_activity_feed', 'export_dashboard_pdf', 'realtime_stat_refresh']
   },
   {
-    id: 'analytics',
-    name: 'Analytics & Reports',
-    actions: ['view_growth_charts', 'recruiter_metrics', 'jobs_performance_analytics', 'applications_pipeline_funnel', 'export_analytics_excel', 'user_retention_cohorts', 'revenue_forecasts']
+    id: 'dashboard_job_seekers',
+    group: 'DASHBOARD',
+    name: 'Job Seekers Dashboard',
+    actions: ['job_seekers_kpis', 'talent_registration_chart', 'skills_education_breakdown', 'recent_talent_activity', 'export_talent_stats', 'realtime_talent_refresh']
   },
+
+  // ── RECRUITER MANAGEMENT ──
   {
     id: 'recruiters',
+    group: 'RECRUITER MANAGEMENT',
     name: 'Recruiter & Company Management',
     actions: ['view_recruiters_directory', 'add_recruiter_button', 'view_recruiter_profile', 'edit_recruiter_profile', 'toggle_recruiter_status', 'toggle_auto_approve', 'change_plan_modal', 'assign_custom_plan_modal', 'extend_subscription_modal', 'reset_recruiter_password', 'login_as_recruiter_button', 'manage_recruiter_team', 'export_recruiters_data']
   },
   {
     id: 'job_posts',
+    group: 'RECRUITER MANAGEMENT',
     name: 'Job Listings & Moderation',
     actions: ['view_job_directory', 'view_pending_jobs', 'approve_single_job', 'bulk_approve_all_jobs', 'reject_job_post', 'view_job_details_modal', 'edit_job_post', 'toggle_job_active', 'expire_job_post', 'delete_job_post', 'view_job_applicants']
   },
   {
     id: 'plans',
-    name: 'Subscription Management',
+    group: 'RECRUITER MANAGEMENT',
+    name: 'Recruiter Subscriptions',
     actions: ['view_plans_table', 'add_plan_button', 'edit_plan_details', 'duplicate_plan_action', 'toggle_plan_status', 'delete_plan_action', 'view_plan_subscribers']
   },
+
+  // ── TALENT MANAGEMENT ──
   {
     id: 'job_seekers',
-    name: 'Talent Pool & Job Seekers',
+    group: 'TALENT MANAGEMENT',
+    name: 'Job Seekers & Talent Pool',
     actions: ['view_seekers_directory', 'view_candidate_profile_full', 'download_candidate_resume', 'verify_candidate_profile_badge', 'toggle_candidate_account_status', 'export_candidates_roster', 'delete_candidate_profile']
   },
   {
-    id: 'applications',
-    name: 'Candidate Job Applications',
-    actions: ['view_all_applications_log', 'filter_by_recruiter_company', 'view_resume_preview_modal', 'update_application_hiring_stage', 'export_applications_spreadsheet']
+    id: 'talent_subscriptions',
+    group: 'TALENT MANAGEMENT',
+    name: 'Talent Subscriptions',
+    actions: ['view_talent_subscriptions', 'manage_talent_tiers', 'view_talent_subscribers', 'grant_talent_pro_access', 'export_talent_subscriptions']
+  },
+
+  // ── REPORT ──
+  {
+    id: 'report_recruiters',
+    group: 'REPORT',
+    name: 'Recruiter Reports & Analytics',
+    actions: ['view_growth_charts', 'recruiter_metrics', 'jobs_performance_analytics', 'applications_pipeline_funnel', 'export_analytics_excel', 'user_retention_cohorts', 'revenue_forecasts']
   },
   {
+    id: 'report_job_seekers',
+    group: 'REPORT',
+    name: 'Job Seeker Reports',
+    actions: ['view_candidate_growth_report', 'skills_demand_analytics', 'application_submission_trends', 'resume_download_audit_report', 'export_job_seekers_report']
+  },
+
+  // ── SYSTEM ──
+  {
     id: 'support',
+    group: 'SYSTEM',
     name: 'Support & Help Desk',
     actions: ['view_all_tickets', 'filter_by_ticket_status', 'reply_to_ticket_thread', 'change_ticket_priority_status', 'assign_ticket_to_agent', 'close_resolve_ticket', 'delete_support_ticket']
   },
   {
     id: 'user_management',
-    name: 'Admin Users, Roles & Permissions',
+    group: 'SYSTEM',
+    name: 'Users & Roles Management',
     actions: ['view_subadmin_roster', 'create_subadmin_account', 'edit_subadmin_details', 'modify_security_permissions', 'suspend_subadmin_account', 'reset_subadmin_password', 'delete_subadmin_account', 'export_audit_logs']
   },
   {
+    id: 'roles_permissions',
+    group: 'SYSTEM',
+    name: 'Roles & Permissions',
+    actions: ['view_roles_matrix', 'create_custom_role', 'edit_role_permissions', 'clone_role_template', 'delete_custom_role', 'export_roles_overview']
+  },
+  {
     id: 'settings',
+    group: 'SYSTEM',
     name: 'Platform Settings & Configuration',
     actions: ['view_system_settings', 'modify_company_info', 'configure_smtp_email', 'manage_integrations', 'system_maintenance']
   }
 ];
+
+const TOTAL_PORTAL_ACTIONS = DEFAULT_PORTAL_MODULES.reduce((sum, m) => sum + m.actions.length, 0);
 
 const generatePresetPermissions = (type) => {
   const perms = {};
@@ -61,7 +100,7 @@ const generatePresetPermissions = (type) => {
       mod.actions.forEach(act => { modPerms[act] = true; });
       perms[mod.id] = modPerms;
     } else if (type === 'operations') {
-      const isOperational = ['dashboard', 'recruiters', 'job_posts', 'job_seekers', 'applications', 'support'].includes(mod.id);
+      const isOperational = ['dashboard_recruiter', 'dashboard_job_seekers', 'recruiters', 'job_posts', 'plans', 'job_seekers', 'talent_subscriptions', 'support'].includes(mod.id);
       const modPerms = { view: isOperational, create_edit: isOperational, delete: false };
       mod.actions.forEach(act => {
         if (isOperational && !act.includes('delete') && !act.includes('reset')) {
@@ -70,19 +109,19 @@ const generatePresetPermissions = (type) => {
       });
       perms[mod.id] = modPerms;
     } else if (type === 'moderator') {
-      const isMod = ['job_posts', 'support', 'dashboard'].includes(mod.id);
+      const isMod = ['dashboard_recruiter', 'job_posts', 'job_seekers', 'support'].includes(mod.id);
       const modPerms = { view: isMod, create_edit: isMod, delete: false };
       mod.actions.forEach(act => {
-        if (['view_job_directory', 'view_pending_jobs', 'approve_single_job', 'bulk_approve_all_jobs', 'reject_job_post', 'view_job_details_modal', 'view_all_tickets', 'reply_to_ticket_thread', 'scoreboard_kpis'].includes(act)) {
+        if (['view_job_directory', 'view_pending_jobs', 'approve_single_job', 'bulk_approve_all_jobs', 'reject_job_post', 'view_job_details_modal', 'view_seekers_directory', 'view_candidate_profile_full', 'verify_candidate_profile_badge', 'view_all_tickets', 'reply_to_ticket_thread', 'scoreboard_kpis'].includes(act)) {
           modPerms[act] = true;
         }
       });
       perms[mod.id] = modPerms;
     } else if (type === 'billing') {
-      const isBilling = ['plans', 'recruiters', 'analytics', 'dashboard'].includes(mod.id);
+      const isBilling = ['dashboard_recruiter', 'plans', 'talent_subscriptions', 'recruiters', 'report_recruiters'].includes(mod.id);
       const modPerms = { view: isBilling, create_edit: isBilling, delete: false };
       mod.actions.forEach(act => {
-        if (['view_plans_table', 'add_plan_button', 'edit_plan_details', 'duplicate_plan_action', 'view_plan_subscribers', 'change_plan_modal', 'assign_custom_plan_modal', 'extend_subscription_modal', 'export_recruiters_data', 'view_recruiters_directory', 'scoreboard_kpis', 'recruiter_metrics'].includes(act)) {
+        if (['view_plans_table', 'add_plan_button', 'edit_plan_details', 'duplicate_plan_action', 'view_plan_subscribers', 'view_talent_subscriptions', 'manage_talent_tiers', 'view_talent_subscribers', 'grant_talent_pro_access', 'export_talent_subscriptions', 'change_plan_modal', 'assign_custom_plan_modal', 'extend_subscription_modal', 'export_recruiters_data', 'view_recruiters_directory', 'scoreboard_kpis', 'recruiter_metrics', 'revenue_forecasts'].includes(act)) {
           modPerms[act] = true;
         }
       });
@@ -90,16 +129,16 @@ const generatePresetPermissions = (type) => {
     } else if (type === 'auditor') {
       const modPerms = { view: true, create_edit: false, delete: false };
       mod.actions.forEach(act => {
-        if (act.startsWith('view_') || act.includes('metrics') || act.includes('scoreboard')) {
+        if (act.startsWith('view_') || act.includes('metrics') || act.includes('scoreboard') || act.includes('chart') || act.includes('analytics') || act.includes('report')) {
           modPerms[act] = true;
         }
       });
       perms[mod.id] = modPerms;
     } else if (type === 'support') {
-      const isSupport = ['support', 'job_seekers', 'recruiters', 'dashboard'].includes(mod.id);
+      const isSupport = ['dashboard_recruiter', 'support', 'job_seekers', 'recruiters'].includes(mod.id);
       const modPerms = { view: isSupport, create_edit: isSupport, delete: false };
       mod.actions.forEach(act => {
-        if (['view_all_tickets', 'filter_by_ticket_status', 'reply_to_ticket_thread', 'change_ticket_priority_status', 'close_resolve_ticket', 'view_seekers_directory', 'view_candidate_profile_full', 'view_recruiters_directory', 'view_recruiter_profile', 'scoreboard_kpis'].includes(act)) {
+        if (['view_all_tickets', 'filter_by_ticket_status', 'reply_to_ticket_thread', 'change_ticket_priority_status', 'assign_ticket_to_agent', 'close_resolve_ticket', 'view_seekers_directory', 'view_candidate_profile_full', 'view_recruiters_directory', 'view_recruiter_profile', 'scoreboard_kpis'].includes(act)) {
           modPerms[act] = true;
         }
       });
@@ -113,7 +152,7 @@ const DEFAULT_SEEDED_ROLES = [
   {
     role_name: 'Super Admin',
     role_title: 'Full Super Admin',
-    description: 'Unrestricted master access to all modules, actions, platform settings and user permissions.',
+    description: 'Unrestricted master access across all 5 navigation groups, modules, platform settings and user permissions.',
     department: 'Executive Management',
     is_super_admin: 1,
     is_system_role: 1,
@@ -122,7 +161,7 @@ const DEFAULT_SEEDED_ROLES = [
   {
     role_name: 'Operations Manager',
     role_title: 'Operations Manager',
-    description: 'Operational control over recruiters, job listings, talent pool, candidate applications, and support tickets.',
+    description: 'Operational control over recruiters, job listings, talent pool, candidate subscriptions, and support tickets.',
     department: 'Operations',
     is_super_admin: 0,
     is_system_role: 1,
@@ -131,7 +170,7 @@ const DEFAULT_SEEDED_ROLES = [
   {
     role_name: 'Content & Job Moderator',
     role_title: 'Content & Job Moderator',
-    description: 'Dedicated to reviewing, approving, rejecting, and moderating job postings and incoming tickets.',
+    description: 'Dedicated to reviewing, approving, rejecting, and moderating job postings, candidate badges, and incoming tickets.',
     department: 'Moderation & Quality',
     is_super_admin: 0,
     is_system_role: 1,
@@ -158,7 +197,7 @@ const DEFAULT_SEEDED_ROLES = [
   {
     role_name: 'Read-Only Auditor',
     role_title: 'Read-Only Auditor',
-    description: 'View-only visibility across platform analytics, recruiter records, jobs, and applications.',
+    description: 'View-only visibility across platform analytics, recruiter records, jobs, and candidate rosters.',
     department: 'Executive Management',
     is_super_admin: 0,
     is_system_role: 1,
@@ -250,7 +289,7 @@ const AdminRoleModel = {
         // Count action permissions
         let grantedActionsCount = 0;
         if (role.is_super_admin) {
-          grantedActionsCount = 76;
+          grantedActionsCount = TOTAL_PORTAL_ACTIONS;
         } else {
           Object.values(perms).forEach(modObj => {
             if (typeof modObj === 'object' && modObj !== null) {

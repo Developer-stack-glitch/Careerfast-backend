@@ -12,6 +12,7 @@ const CandidateSearchController = {
       // Build parameters from query string
       const params = {
         search: req.query.search || req.query.keywords || "",
+        keywordWithinResults: req.query.keywordWithinResults || "",
         keywordMatch: req.query.keywordMatch || "any",
         skills: parseArray(req.query.skills),
         location: parseArray(req.query.location),
