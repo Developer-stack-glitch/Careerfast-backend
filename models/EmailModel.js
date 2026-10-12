@@ -656,7 +656,9 @@ const sendCandidateWelcomeEmail = async ({ email, first_name, last_name }) => {
               <!-- Support Note -->
               <div style="font-size: 13px; color: #64748b; line-height: 1.5; text-align: center; margin-top: 22px; padding-top: 18px; border-top: 1px solid #f1f5f9;">
                 Need assistance? We're here to help! Reach us anytime at
-                <a href="mailto:support@careerfast.in" style="color: #6366f1; font-weight: 600; text-decoration: none;">support@careerfast.in</a>.
+                <a href="mailto:careerfastcontact@gmail.com
+" style="color: #6366f1; font-weight: 600; text-decoration: none;">careerfastcontact@gmail.com
+</a>.
               </div>
             </div>
 
@@ -903,6 +905,234 @@ const sendCandidateDirectEmail = async ({
   }
 };
 
+/**
+ * Send branded welcome email with login credentials and Careerfast logo
+ * @param {Object} params
+ * @param {string} params.email - Recipient email
+ * @param {string} params.password - Plain text password provided during creation
+ * @param {string} [params.name] - Full name of recipient
+ * @param {string} [params.companyName] - Company name
+ * @param {string} [params.roleType] - 'recruiter' | 'master_recruiter' | 'sub_recruiter'
+ * @param {string} [params.designation] - e.g. 'Senior Recruiter', 'Master Recruiter'
+ * @param {string} [params.inviterName] - Name of recruiter who invited (for sub-recruiter)
+ * @param {number} [params.seatQuota] - Sub-recruiter seats allocated to this master
+ * @param {string} [params.portalUrl] - Custom portal login URL
+ */
+const sendRecruiterWelcomeEmail = async ({
+  email,
+  password,
+  name = "Recruiter",
+  companyName = "CareerFast Partner",
+  roleType = "recruiter",
+  designation = "",
+  inviterName = "",
+  seatQuota = null,
+  portalUrl = null,
+}) => {
+  try {
+    const isProduction = process.env.NODE_ENV === "production";
+    const defaultHrUrl = isProduction ? "http://recruit.careerfast.in" : "http://localhost:3001";
+    const baseHrUrl = portalUrl || process.env.HR_PORTAL_URL || defaultHrUrl;
+    const loginUrl = `${baseHrUrl.replace(/\/+$/, '')}/login`;
+    const currentYear = new Date().getFullYear();
+
+    // Check for local logo file to attach as CID
+    const primaryLogoPath = path.resolve(__dirname, "../assets/careerfastlogofinal.png");
+    const fallbackLogoPath = path.resolve(__dirname, "../../careerfast-frontend/src/images/careerfastlogofinal.png");
+
+    let logoAttachment = null;
+    let logoSrc = "https://careerfast.in/_next/static/media/careerfastlogofinal.0nplzw.k4hsr8.png";
+
+    if (fs.existsSync(primaryLogoPath)) {
+      logoAttachment = {
+        filename: "careerfast-logo.png",
+        path: primaryLogoPath,
+        cid: "careerfastlogo",
+      };
+      logoSrc = "cid:careerfastlogo";
+    } else if (fs.existsSync(fallbackLogoPath)) {
+      logoAttachment = {
+        filename: "careerfast-logo.png",
+        path: fallbackLogoPath,
+        cid: "careerfastlogo",
+      };
+      logoSrc = "cid:careerfastlogo";
+    }
+
+    // Role-specific badge, subject & descriptions
+    let roleBadge = "🏢 Company Recruiter";
+    let roleLabel = "Primary Recruiter (Master Login)";
+    let subject = `Welcome to CareerFast! Your Recruiter Account for ${companyName} is Ready`;
+    let greetingText = `Your primary recruiter account for <strong>${companyName}</strong> has been created. You can now access the CareerFast Recruiter Portal to manage job postings, discover top candidates, and build your hiring team.`;
+
+    if (roleType === "master_recruiter") {
+      roleBadge = "⭐ Master Recruiter";
+      roleLabel = designation || "Master Recruiter";
+      subject = `Welcome to CareerFast! Your Master Recruiter Account is Ready`;
+      greetingText = `A Master Recruiter login has been configured for you at <strong>${companyName}</strong>. You have independent access to create job postings, search talent, and manage your assigned sub-recruiter team seats.`;
+    } else if (roleType === "sub_recruiter") {
+      roleBadge = "🤝 Team Recruiter";
+      roleLabel = designation || "Team Recruiter";
+      subject = `You've been invited to join ${companyName} on CareerFast`;
+      greetingText = `${inviterName ? `<strong>${inviterName}</strong> has` : `Your hiring lead has`} invited you to join the recruitment team for <strong>${companyName}</strong> on CareerFast as <strong>${designation || "Recruiter"}</strong>.`;
+    }
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${subject}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #334155; -webkit-font-smoothing: antialiased;">
+  <div style="width: 100%; background-color: #f1f5f9; padding: 36px 12px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+      <tr>
+        <td align="center">
+          <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);">
+            <!-- Top Gradient Accent -->
+            <div style="height: 6px; background: linear-gradient(90deg, #4f46e5 0%, #7c3aed 50%, #2563eb 100%);"></div>
+
+            <!-- Header with Careerfast Logo -->
+            <div style="padding: 28px 24px 20px 24px; text-align: center; background-color: #ffffff; border-bottom: 1px solid #f1f5f9;">
+              <img src="${logoSrc}" alt="CareerFast Logo" style="max-height: 48px; max-width: 220px; height: auto; width: auto; display: inline-block; object-fit: contain;" />
+            </div>
+
+            <!-- Main Content Area -->
+            <div style="padding: 28px 32px 32px 32px;">
+              <!-- Role Badge -->
+              <div style="text-align: center; margin-bottom: 16px;">
+                <span style="display: inline-block; background-color: #ede9fe; color: #6d28d9; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; padding: 6px 16px; border-radius: 9999px; border: 1px solid #ddd6fe;">
+                  ${roleBadge}
+                </span>
+              </div>
+
+              <!-- Greeting Heading -->
+              <div style="text-align: center; margin-bottom: 24px;">
+                <h1 style="font-size: 24px; font-weight: 800; color: #0f172a; margin: 0 0 10px 0; line-height: 1.3;">
+                  Welcome to CareerFast, ${name}!
+                </h1>
+                <p style="font-size: 15px; line-height: 1.6; color: #475569; margin: 0;">
+                  ${greetingText}
+                </p>
+              </div>
+
+              <!-- Login Credentials Card -->
+              <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 22px; margin-bottom: 26px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0;">
+                  <span style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px; color: #475569;">
+                    🔑 Your Login Credentials
+                  </span>
+                  <span style="font-size: 11px; color: #059669; font-weight: 700; background: #d1fae5; padding: 2px 8px; border-radius: 6px;">
+                    Active Account
+                  </span>
+                </div>
+                
+                <table width="100%" cellspacing="0" cellpadding="8" style="font-size: 14px; border-collapse: collapse;">
+                  <tr style="border-bottom: 1px dashed #e2e8f0;">
+                    <td style="color: #64748b; font-weight: 500; padding: 8px 0; width: 38%;">Portal URL</td>
+                    <td align="right" style="color: #2563eb; font-weight: 600; padding: 8px 0;">
+                      <a href="${loginUrl}" target="_blank" style="color: #2563eb; text-decoration: none;">${loginUrl}</a>
+                    </td>
+                  </tr>
+                  <tr style="border-bottom: 1px dashed #e2e8f0;">
+                    <td style="color: #64748b; font-weight: 500; padding: 8px 0;">Company</td>
+                    <td align="right" style="color: #0f172a; font-weight: 600; padding: 8px 0;">${companyName}</td>
+                  </tr>
+                  <tr style="border-bottom: 1px dashed #e2e8f0;">
+                    <td style="color: #64748b; font-weight: 500; padding: 8px 0;">Account Role</td>
+                    <td align="right" style="color: #6d28d9; font-weight: 600; padding: 8px 0;">${roleLabel}</td>
+                  </tr>
+                  ${seatQuota !== null && seatQuota !== undefined ? `
+                  <tr style="border-bottom: 1px dashed #e2e8f0;">
+                    <td style="color: #64748b; font-weight: 500; padding: 8px 0;">Team Seat Quota</td>
+                    <td align="right" style="color: #0f172a; font-weight: 700; padding: 8px 0;">${seatQuota} Sub-Recruiter ${Number(seatQuota) === 1 ? 'Seat' : 'Seats'}</td>
+                  </tr>
+                  ` : ''}
+                  <tr style="border-bottom: 1px dashed #e2e8f0;">
+                    <td style="color: #64748b; font-weight: 500; padding: 8px 0;">Login Email</td>
+                    <td align="right" style="color: #0f172a; font-weight: 700; padding: 8px 0; word-break: break-all;">
+                      ${email}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="color: #64748b; font-weight: 500; padding: 8px 0;">Password</td>
+                    <td align="right" style="padding: 8px 0;">
+                      <span style="display: inline-block; background-color: #e2e8f0; color: #0f172a; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 15px; font-weight: 700; padding: 4px 10px; border-radius: 6px; letter-spacing: 0.5px;">
+                        ${password}
+                      </span>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+
+              <!-- Call to Action Button -->
+              <div style="text-align: center; margin-bottom: 28px;">
+                <a href="${loginUrl}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%); color: #ffffff; font-weight: 700; font-size: 15px; padding: 14px 34px; border-radius: 10px; text-decoration: none; box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35); text-align: center;">
+                  Log In to Recruiter Portal &rarr;
+                </a>
+              </div>
+
+              <!-- Security Notice -->
+              <div style="background-color: #fffbeb; border: 1px solid #fef3c7; border-radius: 10px; padding: 14px 16px; margin-bottom: 20px;">
+                <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                  <tr>
+                    <td width="24" valign="top" style="font-size: 16px;">🔐</td>
+                    <td style="font-size: 12.5px; color: #92400e; line-height: 1.5; padding-left: 8px;">
+                      <strong>Security Advisory:</strong> This email contains login credentials. For your security, please change your password after logging in for the first time via Profile Settings. Never share your password with anyone.
+                    </td>
+                  </tr>
+                </table>
+              </div>
+
+              <!-- Assistance -->
+              <div style="text-align: center; font-size: 13px; color: #64748b; margin-top: 20px; line-height: 1.6;">
+                Have questions or need assistance? Reply directly to this email or reach us at 
+                <a href="mailto:careerfastcontact@gmail.com
+" style="color: #4f46e5; text-decoration: none; font-weight: 600;">careerfastcontact@gmail.com
+</a>.
+              </div>
+            </div>
+
+            <!-- Footer -->
+            <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 22px 28px; text-align: center; font-size: 12px; color: #94a3b8; line-height: 1.6;">
+              <p style="margin: 0 0 4px 0; font-weight: 600; color: #64748b;">CareerFast &bull; Next-Gen Recruitment Platform</p>
+              <p style="margin: 0 0 6px 0; font-size: 11.5px; color: #94a3b8;">
+                This notification was sent to ${email} regarding your authorized CareerFast recruiter account.
+              </p>
+              <p style="margin: 0; font-size: 11px; color: #94a3b8;">
+                &copy; ${currentYear} CareerFast. All rights reserved. &bull;
+                <a href="${baseHrUrl}" target="_blank" style="color: #4f46e5; text-decoration: none;">careerfast.in</a>
+              </p>
+            </div>
+          </div>
+        </td>
+      </tr>
+    </table>
+  </div>
+</body>
+</html>
+    `;
+
+    const mailOptions = {
+      from: `"CareerFast Recruiter Portal" <${process.env.SMTP_FROM || 'hr@acte.in'}>`,
+      to: email,
+      subject: subject,
+      html: htmlContent,
+      attachments: logoAttachment ? [logoAttachment] : [],
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[EmailModel] Recruiter welcome email (${roleType}) sent to ${email}:`, info?.messageId);
+    return { success: true, messageId: info?.messageId };
+  } catch (error) {
+    console.error(`[EmailModel] Error sending recruiter welcome email to ${email}:`, error);
+    // Return failure status rather than throwing so account creation doesn't fail
+    return { success: false, error: error.message };
+  }
+};
+
 module.exports = {
   sendVerificationEmail,
   verifyOTP,
@@ -913,5 +1143,6 @@ module.exports = {
   sendTeamMemberInviteEmail,
   sendCandidateWelcomeEmail,
   sendCandidateDirectEmail,
+  sendRecruiterWelcomeEmail,
 };
 

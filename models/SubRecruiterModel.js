@@ -1,11 +1,12 @@
 const pool = require("../config/dbConfig");
 const bcrypt = require("bcrypt");
+const { sendRecruiterWelcomeEmail } = require("./EmailModel");
 
 const SubRecruiterModel = {
   // Get all sub-recruiters for a main recruiter along with seat quota metrics and pool breakdown
   getTeamByMainRecruiterId: async (mainRecruiterId) => {
     try {
-      // 1. Get plan quota and pool metrics for this recruiter
+      // 1. Get plan quota and pool metrics for this master recruiter
       const [subRows] = await pool.query(
         `SELECT rs.id as subscription_id, rs.plan_id, rs.status,
                 sp.name as plan_name, sp.plan_type, sp.slug as plan_slug,
@@ -13,16 +14,24 @@ const SubRecruiterModel = {
                 COALESCE(sp.job_post_limit, 0) as job_post_limit,
                 COALESCE(sp.resume_view_limit, 0) as resume_view_limit,
                 COALESCE(sp.resume_download_limit, 0) as resume_download_limit,
+                COALESCE(sp.email_limit, 50) as email_limit,
+                COALESCE(sp.excel_download_limit, 50) as excel_download_limit,
                 COALESCE(su.job_posts_used, 0) as job_posts_used,
                 COALESCE(su.resume_views_used, 0) as resume_views_used,
                 COALESCE(su.resume_downloads_used, 0) as resume_downloads_used,
-                hp.id as company_id, hp.company_name
-         FROM recruiter_subscriptions rs
-         JOIN subscription_plans sp ON rs.plan_id = sp.id
+                COALESCE(su.emails_sent, su.emails_used, 0) as emails_sent,
+                COALESCE(su.excel_downloads_used, 0) as excel_downloads_used,
+                COALESCE(hp.id, u.company_id) as company_id,
+                COALESCE(hp.company_name, u.organization, 'Company') as company_name,
+                u.allocated_seats
+         FROM users u
+         LEFT JOIN hr_profiles hp ON u.id = hp.user_id
+         LEFT JOIN recruiter_subscriptions rs ON u.id = rs.recruiter_id AND rs.id = (
+           SELECT MAX(id) FROM recruiter_subscriptions WHERE recruiter_id = u.id
+         )
+         LEFT JOIN subscription_plans sp ON rs.plan_id = sp.id
          LEFT JOIN subscription_usage su ON rs.id = su.subscription_id
-         LEFT JOIN hr_profiles hp ON rs.recruiter_id = hp.user_id
-         WHERE rs.recruiter_id = ?
-         ORDER BY rs.id DESC
+         WHERE u.id = ?
          LIMIT 1`,
         [mainRecruiterId]
       );
@@ -35,12 +44,17 @@ const SubRecruiterModel = {
         subRows[0]?.plan_name?.toLowerCase().includes('custom')
       );
 
-      const planQuota = isCustomPlan ? (subRows[0]?.sub_recruiter_limit ?? 0) : 0;
+      // Independent Sub-Recruiter seat limit for THIS Master Recruiter
+      const planQuota = Number(
+        subRows[0]?.allocated_seats > 0
+          ? subRows[0].allocated_seats
+          : (subRows[0]?.sub_recruiter_limit ?? 0)
+      );
       const companyName = subRows[0]?.company_name || 'Company';
       const companyId = subRows[0]?.company_id || null;
       const planName = subRows[0]?.plan_name || 'Basic';
 
-      if (!isCustomPlan) {
+      if (planQuota <= 0 && !isCustomPlan) {
         return {
           team: [],
           is_custom: false,
@@ -57,7 +71,9 @@ const SubRecruiterModel = {
             pool: {
               job_posts: { total: 0, used: 0, remaining_pool: 0, allocated_to_team: 0, unallocated: 0 },
               resume_views: { total: 0, used: 0, remaining_pool: 0, allocated_to_team: 0, unallocated: 0 },
-              resume_downloads: { total: 0, used: 0, remaining_pool: 0, allocated_to_team: 0, unallocated: 0 }
+              resume_downloads: { total: 0, used: 0, remaining_pool: 0, allocated_to_team: 0, unallocated: 0 },
+              emails: { total: 0, used: 0, remaining_pool: 0, allocated_to_team: 0, unallocated: 0 },
+              excel_downloads: { total: 0, used: 0, remaining_pool: 0, allocated_to_team: 0, unallocated: 0 }
             }
           }
         };
@@ -70,21 +86,74 @@ const SubRecruiterModel = {
         resume_views_used: Number(subRows[0]?.resume_views_used || 0),
         resume_download_limit: Number(subRows[0]?.resume_download_limit || 0),
         resume_downloads_used: Number(subRows[0]?.resume_downloads_used || 0),
+        email_limit: Number(subRows[0]?.email_limit || 0),
+        emails_sent: Number(subRows[0]?.emails_sent || 0),
+        excel_download_limit: Number(subRows[0]?.excel_download_limit || 0),
+        excel_downloads_used: Number(subRows[0]?.excel_downloads_used || 0),
       };
 
-      // 2. Fetch all sub-recruiters
+      // Fetch all Master Recruiters for this company
+      const [masterRows] = await pool.query(
+        `SELECT u.id, u.first_name, u.last_name, u.email, u.phone,
+                COALESCE(u.allocated_seats, 0) as allocated_seats,
+                (SELECT COUNT(*) FROM sub_recruiters sr WHERE sr.main_recruiter_id = u.id) as sub_recruiters_count
+         FROM users u
+         WHERE (
+           (u.company_id = ? AND ? IS NOT NULL) OR 
+           (u.organization = ? AND ? IS NOT NULL AND u.organization != '') OR
+           u.id = ?
+         )
+         AND u.role_id = 3
+         AND (u.master_recruiter_id IS NULL OR u.master_recruiter_id = 0)
+         AND u.id NOT IN (SELECT sub_recruiter_id FROM sub_recruiters)
+         ORDER BY u.id ASC`,
+        [companyId, companyId, companyName, companyName, mainRecruiterId]
+      );
+
+      const masterRecruiters = (masterRows.length > 0 ? masterRows : [{
+        id: mainRecruiterId,
+        first_name: subRows[0]?.first_name || '',
+        last_name: subRows[0]?.last_name || '',
+        email: subRows[0]?.email || '',
+        phone: subRows[0]?.phone || '',
+        allocated_seats: planQuota,
+        sub_recruiters_count: 0
+      }]).map(m => {
+        const allocated = Number(m.allocated_seats || 0);
+        const used = Number(m.sub_recruiters_count || 0);
+        return {
+          id: m.id,
+          name: `${m.first_name || ''} ${m.last_name || ''}`.trim() || m.email || `Master #${m.id}`,
+          first_name: m.first_name || '',
+          last_name: m.last_name || '',
+          email: m.email || '',
+          phone: m.phone || '',
+          allocated_seats: allocated,
+          sub_recruiters_count: used,
+          available_seats: Math.max(0, allocated - used)
+        };
+      });
+
+      const allMasterIds = masterRecruiters.map(m => m.id);
+
+      // 2. Fetch all sub-recruiters across this company and its master recruiters
       const [members] = await pool.query(
         `SELECT sr.id, sr.main_recruiter_id, sr.sub_recruiter_id, sr.company_id,
                 sr.designation, sr.role_preset, sr.permissions, sr.status,
                 sr.created_at, sr.updated_at,
                 u.first_name, u.last_name, u.email, u.phone, u.is_active as user_active,
                 CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) as full_name,
-                (SELECT COUNT(*) FROM job_post jp WHERE jp.user_id = sr.sub_recruiter_id) as jobs_posted_count
+                (SELECT COUNT(*) FROM job_post jp WHERE jp.user_id = sr.sub_recruiter_id) as jobs_posted_count,
+                mu.first_name as master_first_name,
+                mu.last_name as master_last_name,
+                mu.email as master_email,
+                CONCAT(COALESCE(mu.first_name, ''), ' ', COALESCE(mu.last_name, '')) as master_name
          FROM sub_recruiters sr
          JOIN users u ON sr.sub_recruiter_id = u.id
-         WHERE sr.main_recruiter_id = ?
+         LEFT JOIN users mu ON sr.main_recruiter_id = mu.id
+         WHERE sr.main_recruiter_id IN (?) OR (sr.company_id = ? AND ? IS NOT NULL)
          ORDER BY sr.id DESC`,
-        [mainRecruiterId]
+        [allMasterIds.length > 0 ? allMasterIds : [mainRecruiterId], companyId, companyId]
       );
 
       // Real counts from jobs table across entire company (main recruiter + any sub-recruiters)
@@ -105,6 +174,8 @@ const SubRecruiterModel = {
       let allocatedJobPostsTotal = 0;
       let allocatedResumeViewsTotal = 0;
       let allocatedResumeDownloadsTotal = 0;
+      let allocatedEmailsTotal = 0;
+      let allocatedExcelDownloadsTotal = 0;
 
       // Parse JSON permissions if string & calculate split allocations
       const parsedMembers = members.map(m => {
@@ -122,15 +193,21 @@ const SubRecruiterModel = {
         const allocatedJobs = quotaMode === 'split' ? Number(perms.allocated_job_posts || 0) : null;
         const allocatedViews = quotaMode === 'split' ? Number(perms.allocated_resume_views || 0) : null;
         const allocatedDownloads = quotaMode === 'split' ? Number(perms.allocated_resume_downloads || 0) : null;
+        const allocatedEmails = quotaMode === 'split' ? (perms.allocated_emails !== undefined && perms.allocated_emails !== null ? Number(perms.allocated_emails) : null) : null;
+        const allocatedExcel = quotaMode === 'split' ? (perms.allocated_excel_downloads !== undefined && perms.allocated_excel_downloads !== null ? Number(perms.allocated_excel_downloads) : null) : null;
 
         const usedJobs = Number(perms.used_job_posts || m.jobs_posted_count || 0);
         const usedViews = Number(perms.used_resume_views || 0);
         const usedDownloads = Number(perms.used_resume_downloads || 0);
+        const usedEmails = Number(perms.used_emails || perms.emails_sent || 0);
+        const usedExcel = Number(perms.used_excel_downloads || 0);
 
         if (quotaMode === 'split') {
           allocatedJobPostsTotal += (allocatedJobs || 0);
           allocatedResumeViewsTotal += (allocatedViews || 0);
           allocatedResumeDownloadsTotal += (allocatedDownloads || 0);
+          allocatedEmailsTotal += (allocatedEmails || 0);
+          allocatedExcelDownloadsTotal += (allocatedExcel || 0);
         }
 
         return {
@@ -141,12 +218,20 @@ const SubRecruiterModel = {
             allocated_job_posts: allocatedJobs,
             allocated_resume_views: allocatedViews,
             allocated_resume_downloads: allocatedDownloads,
+            allocated_emails: allocatedEmails,
+            allocated_excel_downloads: allocatedExcel,
             used_job_posts: usedJobs,
             used_resume_views: usedViews,
             used_resume_downloads: usedDownloads,
+            used_emails: usedEmails,
+            used_excel_downloads: usedExcel,
             remaining_job_posts: allocatedJobs !== null ? Math.max(0, allocatedJobs - usedJobs) : null,
             remaining_resume_views: allocatedViews !== null ? Math.max(0, allocatedViews - usedViews) : null,
             remaining_resume_downloads: allocatedDownloads !== null ? Math.max(0, allocatedDownloads - usedDownloads) : null,
+            remaining_emails: allocatedEmails !== null ? Math.max(0, allocatedEmails - usedEmails) : null,
+            remaining_excel_downloads: allocatedExcel !== null ? Math.max(0, allocatedExcel - usedExcel) : null,
+            can_contact_candidates: perms.can_contact_candidates !== false,
+            can_export_excel: perms.can_export_excel !== false
           }
         };
       });
@@ -158,9 +243,12 @@ const SubRecruiterModel = {
       const remainingUnallocatedJobs = Math.max(0, poolLimits.job_post_limit - effectiveJobsUsed - allocatedJobPostsTotal);
       const remainingUnallocatedViews = Math.max(0, poolLimits.resume_view_limit - poolLimits.resume_views_used - allocatedResumeViewsTotal);
       const remainingUnallocatedDownloads = Math.max(0, poolLimits.resume_download_limit - poolLimits.resume_downloads_used - allocatedResumeDownloadsTotal);
+      const remainingUnallocatedEmails = Math.max(0, poolLimits.email_limit - poolLimits.emails_sent - allocatedEmailsTotal);
+      const remainingUnallocatedExcel = Math.max(0, poolLimits.excel_download_limit - poolLimits.excel_downloads_used - allocatedExcelDownloadsTotal);
 
       return {
         team: parsedMembers,
+        master_recruiters: masterRecruiters,
         stats: {
           sub_recruiter_limit: Number(planQuota),
           total_members: totalMembers,
@@ -169,6 +257,7 @@ const SubRecruiterModel = {
           company_id: companyId,
           company_name: companyName,
           plan_name: planName,
+          master_recruiters: masterRecruiters,
           pool: {
             job_posts: {
               total: poolLimits.job_post_limit,
@@ -197,6 +286,22 @@ const SubRecruiterModel = {
               allocated_to_team: allocatedResumeDownloadsTotal,
               unallocated: remainingUnallocatedDownloads,
               available_to_allocate: remainingUnallocatedDownloads
+            },
+            emails: {
+              total: poolLimits.email_limit,
+              used: poolLimits.emails_sent,
+              remaining_pool: Math.max(0, poolLimits.email_limit - poolLimits.emails_sent),
+              allocated_to_team: allocatedEmailsTotal,
+              unallocated: remainingUnallocatedEmails,
+              available_to_allocate: remainingUnallocatedEmails
+            },
+            excel_downloads: {
+              total: poolLimits.excel_download_limit,
+              used: poolLimits.excel_downloads_used,
+              remaining_pool: Math.max(0, poolLimits.excel_download_limit - poolLimits.excel_downloads_used),
+              allocated_to_team: allocatedExcelDownloadsTotal,
+              unallocated: remainingUnallocatedExcel,
+              available_to_allocate: remainingUnallocatedExcel
             }
           }
         }
@@ -220,45 +325,75 @@ const SubRecruiterModel = {
         password,
         designation = 'Recruiter',
         role_preset = 'recruiter',
-        permissions = {}
+        permissions = {},
+        master_recruiter_id
       } = data;
 
       if (!email || !password || !first_name) {
         throw new Error("First name, email, and password are required.");
       }
 
-      // 1. Verify Seat Quota and Custom Plan
-      const [subRows] = await connection.query(
-        `SELECT sp.sub_recruiter_limit, sp.plan_type, sp.slug as plan_slug, sp.name as plan_name
-         FROM recruiter_subscriptions rs
-         JOIN subscription_plans sp ON rs.plan_id = sp.id
-         WHERE rs.recruiter_id = ?
-         ORDER BY rs.id DESC
+      const targetMasterId = Number(master_recruiter_id || mainRecruiterId);
+
+      // 1. Verify Seat Quota and Master Recruiter Account
+      const [userRows] = await connection.query(
+        `SELECT u.id, u.first_name, u.last_name, u.email, u.organization, u.company_id, u.allocated_seats,
+                rs.id as subscription_id, rs.status as subscription_status,
+                sp.id as plan_id, sp.name as plan_name, sp.plan_type, sp.slug as plan_slug,
+                sp.sub_recruiter_limit, sp.master_login_limit
+         FROM users u
+         LEFT JOIN recruiter_subscriptions rs ON u.id = rs.recruiter_id AND rs.id = (
+           SELECT MAX(id) FROM recruiter_subscriptions WHERE recruiter_id = u.id
+         )
+         LEFT JOIN subscription_plans sp ON rs.plan_id = sp.id
+         WHERE u.id = ?
          LIMIT 1`,
-        [mainRecruiterId]
+        [targetMasterId]
       );
 
-      const isCustomPlan = Boolean(
-        subRows[0]?.plan_type === 'custom' ||
-        subRows[0]?.plan_type === 'Custom' ||
-        subRows[0]?.plan_slug?.startsWith('custom') ||
-        subRows[0]?.plan_name?.toLowerCase().includes('custom')
-      );
-
-      if (!isCustomPlan) {
-        throw new Error("Sub-recruiter team seats are exclusive to Custom Plans assigned by the Super Admin. Please upgrade your plan.");
+      let masterUser = userRows[0];
+      if (!masterUser) {
+        throw new Error("Master recruiter user not found.");
       }
 
-      const limit = subRows[0]?.sub_recruiter_limit ?? 0;
+      // If user has no direct subscription, lookup by company_id
+      if (!masterUser.plan_id && masterUser.company_id) {
+        const [compSubRows] = await connection.query(
+          `SELECT rs.id as subscription_id, rs.status as subscription_status,
+                  sp.id as plan_id, sp.name as plan_name, sp.plan_type, sp.slug as plan_slug,
+                  sp.sub_recruiter_limit, sp.master_login_limit
+           FROM recruiter_subscriptions rs
+           JOIN subscription_plans sp ON rs.plan_id = sp.id
+           WHERE rs.company_id = ? AND rs.status = 'Active'
+           ORDER BY rs.id DESC
+           LIMIT 1`,
+          [masterUser.company_id]
+        );
+        if (compSubRows.length > 0) {
+          masterUser = { ...masterUser, ...compSubRows[0] };
+        }
+      }
+
+      const limit = Number(
+        masterUser.allocated_seats !== undefined && masterUser.allocated_seats !== null
+          ? masterUser.allocated_seats
+          : (masterUser.sub_recruiter_limit ?? 0)
+      );
+
+      const masterDisplayName = `${masterUser.first_name || ''} ${masterUser.last_name || ''}`.trim() || masterUser.email;
+
+      if (limit <= 0) {
+        throw new Error(`Master recruiter (${masterDisplayName}) has 0 sub-recruiter seats allocated. Super Admin must assign seats first.`);
+      }
 
       const [existingCountRows] = await connection.query(
         `SELECT COUNT(*) as count FROM sub_recruiters WHERE main_recruiter_id = ?`,
-        [mainRecruiterId]
+        [targetMasterId]
       );
 
       const existingCount = existingCountRows[0]?.count || 0;
       if (existingCount >= limit) {
-        throw new Error(`Team seat limit reached (${limit} seats allowed under your Custom plan). Contact Super Admin to add more seats.`);
+        throw new Error(`Seat limit reached for Master Recruiter (${masterDisplayName}): ${existingCount} of ${limit} sub-recruiter seats used. Contact Super Admin to allocate more seats.`);
       }
 
       // 2. Check if email already exists
@@ -273,10 +408,10 @@ const SubRecruiterModel = {
       // 3. Get Main recruiter company info
       const [hrRows] = await connection.query(
         `SELECT id, company_name FROM hr_profiles WHERE user_id = ? LIMIT 1`,
-        [mainRecruiterId]
+        [targetMasterId]
       );
-      const companyId = hrRows[0]?.id || null;
-      const organization = hrRows[0]?.company_name || 'Company';
+      const companyId = masterUser.company_id || hrRows[0]?.id || null;
+      const organization = hrRows[0]?.company_name || masterUser.organization || 'Company';
 
       // 4. Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
@@ -285,15 +420,17 @@ const SubRecruiterModel = {
       const [userResult] = await connection.query(
         `INSERT INTO users (
           first_name, last_name, email, password, phone, phone_code,
-          role_id, is_active, organization, created_date, is_email_verified
-        ) VALUES (?, ?, ?, ?, ?, '+91', 3, 1, ?, NOW(), 1)`,
+          role_id, is_active, organization, company_id, master_recruiter_id, created_date, is_email_verified
+        ) VALUES (?, ?, ?, ?, ?, '+91', 3, 1, ?, ?, ?, NOW(), 1)`,
         [
           first_name.trim(),
           last_name.trim(),
           email.trim().toLowerCase(),
           hashedPassword,
           phone || '',
-          organization
+          organization,
+          companyId,
+          targetMasterId
         ]
       );
       const newUserId = userResult.insertId;
@@ -415,20 +552,28 @@ const SubRecruiterModel = {
         }
       }
 
+      const allocatedEmails = quotaMode === 'split' ? Math.max(0, Number(permissions.allocated_emails) || 0) : null;
+      const allocatedExcelDownloads = quotaMode === 'split' ? Math.max(0, Number(permissions.allocated_excel_downloads) || 0) : null;
+
       const finalPermissions = {
         can_post_jobs: Boolean(permissions.can_post_jobs ?? (role_preset === 'team_admin' || role_preset === 'recruiter')),
         can_view_resumes: Boolean(permissions.can_view_resumes ?? true),
         can_download_resumes: Boolean(permissions.can_download_resumes ?? (role_preset === 'team_admin' || role_preset === 'recruiter')),
         can_contact_candidates: Boolean(permissions.can_contact_candidates ?? (role_preset === 'team_admin' || role_preset === 'recruiter')),
+        can_export_excel: Boolean(permissions.can_export_excel ?? (role_preset === 'team_admin' || role_preset === 'recruiter')),
         can_manage_applications: Boolean(permissions.can_manage_applications ?? true),
         can_edit_company_profile: Boolean(permissions.can_edit_company_profile ?? (role_preset === 'team_admin')),
         quota_mode: quotaMode,
         allocated_job_posts: allocatedJobPosts,
         allocated_resume_views: allocatedResumeViews,
         allocated_resume_downloads: allocatedResumeDownloads,
+        allocated_emails: allocatedEmails,
+        allocated_excel_downloads: allocatedExcelDownloads,
         used_job_posts: 0,
         used_resume_views: 0,
-        used_resume_downloads: 0
+        used_resume_downloads: 0,
+        used_emails: 0,
+        used_excel_downloads: 0
       };
 
       // 7. Insert into `sub_recruiters`
@@ -438,7 +583,7 @@ const SubRecruiterModel = {
           designation, role_preset, permissions, status
         ) VALUES (?, ?, ?, ?, ?, ?, 'active')`,
         [
-          mainRecruiterId,
+          targetMasterId,
           newUserId,
           companyId,
           designation,
@@ -448,6 +593,18 @@ const SubRecruiterModel = {
       );
 
       await connection.commit();
+
+      // Send branded welcome email with login credentials and logo
+      const inviterName = `${masterUser.first_name || ''} ${masterUser.last_name || ''}`.trim();
+      sendRecruiterWelcomeEmail({
+        email: email.trim().toLowerCase(),
+        password,
+        name: `${first_name} ${last_name}`.trim(),
+        companyName: organization || 'Company',
+        roleType: 'sub_recruiter',
+        designation: designation || 'Team Recruiter',
+        inviterName: inviterName || organization || 'Your Hiring Lead',
+      }).catch(err => console.error("[createSubRecruiter] Email dispatch error:", err));
 
       return {
         id: subResult.insertId,
@@ -499,6 +656,20 @@ const SubRecruiterModel = {
       if (role_preset !== undefined) {
         updates.push(`role_preset = ?`);
         params.push(role_preset);
+      }
+      if (data.master_recruiter_id) {
+        const newMasterId = Number(data.master_recruiter_id);
+        updates.push(`main_recruiter_id = ?`);
+        params.push(newMasterId);
+
+        try {
+          await pool.query(
+            `UPDATE users SET master_recruiter_id = ? WHERE id = (SELECT sub_recruiter_id FROM sub_recruiters WHERE id = ?)`,
+            [newMasterId, subRecruiterRecordId]
+          );
+        } catch (mErr) {
+          console.warn("[updatePermissions] Error syncing user master_recruiter_id:", mErr.message);
+        }
       }
       if (permissions !== undefined) {
         let permsObj = typeof permissions === 'string' ? JSON.parse(permissions) : { ...permissions };
@@ -618,7 +789,9 @@ const SubRecruiterModel = {
           ...permsObj,
           used_job_posts: existingPerms.used_job_posts || 0,
           used_resume_views: existingPerms.used_resume_views || 0,
-          used_resume_downloads: existingPerms.used_resume_downloads || 0
+          used_resume_downloads: existingPerms.used_resume_downloads || 0,
+          used_emails: existingPerms.used_emails || 0,
+          used_excel_downloads: existingPerms.used_excel_downloads || 0
         };
 
         updates.push(`permissions = ?`);

@@ -55,6 +55,7 @@ const RecruiterSubscriptionController = {
           COALESCE(sp.excel_download_limit, 0) AS excel_download_limit,
           sp.featured_job_limit,
           sp.urgent_job_limit,
+          COALESCE(sp.sub_recruiter_limit, 1) AS sub_recruiter_limit,
 
           /* Permissions */
           sp.candidate_search,
@@ -308,18 +309,22 @@ const RecruiterSubscriptionController = {
       const isSubRecruiter = Boolean(subRecruiter);
       let subRecruiterInfo = null;
 
+      const teamSubRecruiterLimit = Number(sub.sub_recruiter_limit !== undefined && sub.sub_recruiter_limit !== null ? sub.sub_recruiter_limit : 1);
+      const teamSubRecruitersCount = Math.max(0, companyRecruiterIds.length - 1);
+
       let effectiveLimits = {
         job_post_limit: sub.job_post_limit,
         job_posts_limit: sub.job_post_limit,
         active_job_limit: sub.active_job_limit,
-        resume_view_limit: isCustomPlan ? sub.resume_view_limit : 0,
-        resume_views_limit: isCustomPlan ? sub.resume_view_limit : 0,
-        resume_download_limit: isCustomPlan ? sub.resume_download_limit : 0,
-        resume_downloads_limit: isCustomPlan ? sub.resume_download_limit : 0,
-        email_limit: isCustomPlan ? (sub.email_limit ?? 0) : 0,
-        whatsapp_limit: isCustomPlan ? (sub.whatsapp_limit ?? 0) : 0,
-        excel_download_limit: isCustomPlan ? (sub.excel_download_limit ?? 0) : 0,
-        excel_downloads_limit: isCustomPlan ? (sub.excel_download_limit ?? 0) : 0,
+        resume_view_limit: Number(sub.resume_view_limit || 0),
+        resume_views_limit: Number(sub.resume_view_limit || 0),
+        resume_download_limit: Number(sub.resume_download_limit || 0),
+        resume_downloads_limit: Number(sub.resume_download_limit || 0),
+        email_limit: Number(sub.email_limit || 0),
+        whatsapp_limit: Number(sub.whatsapp_limit || 0),
+        excel_download_limit: Number(sub.excel_download_limit || 0),
+        excel_downloads_limit: Number(sub.excel_download_limit || 0),
+        sub_recruiter_limit: teamSubRecruiterLimit,
         featured_job_limit: sub.featured_job_limit,
         urgent_job_limit: sub.urgent_job_limit
       };
@@ -348,6 +353,10 @@ const RecruiterSubscriptionController = {
         excel_download_limit: effectiveLimits.excel_download_limit,
         excel_downloads_limit: effectiveLimits.excel_downloads_limit,
         excel_downloads_remaining: Math.max(0, effectiveLimits.excel_download_limit - (sub.excel_downloads_used || 0)),
+        sub_recruiters_count: teamSubRecruitersCount,
+        sub_recruiters_used: teamSubRecruitersCount,
+        sub_recruiter_limit: teamSubRecruiterLimit,
+        sub_recruiters_remaining: Math.max(0, teamSubRecruiterLimit - teamSubRecruitersCount),
         featured_jobs_used: sub.featured_jobs_used,
         featured_job_limit: sub.featured_job_limit,
         featured_jobs_remaining: Math.max(0, sub.featured_job_limit - sub.featured_jobs_used),
@@ -367,16 +376,16 @@ const RecruiterSubscriptionController = {
         effectivePermissions = {
           ...permissionsObj,
           can_post_jobs: subPerms.can_post_jobs !== false,
-          can_view_resumes: isCustomPlan && subPerms.can_view_resumes !== false,
-          can_download_resumes: isCustomPlan && subPerms.can_download_resumes !== false,
-          can_contact_candidates: isCustomPlan && subPerms.can_contact_candidates !== false,
+          can_view_resumes: subPerms.can_view_resumes !== false,
+          can_download_resumes: subPerms.can_download_resumes !== false,
+          can_contact_candidates: subPerms.can_contact_candidates !== false,
           can_manage_applications: subPerms.can_manage_applications !== false,
           can_edit_company_profile: subPerms.can_edit_company_profile === true,
           can_manage_team: false,
           can_manage_billing: false,
-          candidate_search: isCustomPlan && subPerms.can_view_resumes !== false,
-          candidate_contact: isCustomPlan && subPerms.can_contact_candidates !== false,
-          resume_database: isCustomPlan && subPerms.can_view_resumes !== false
+          candidate_search: subPerms.can_view_resumes !== false,
+          candidate_contact: subPerms.can_contact_candidates !== false,
+          resume_database: subPerms.can_view_resumes !== false
         };
 
         // If split quota mode, reflect sub-recruiter's specific quota
@@ -417,10 +426,31 @@ const RecruiterSubscriptionController = {
           effectiveUsage.resume_downloads_used = subDownloadsUsed;
           effectiveUsage.resume_downloads_remaining = Math.max(0, subDownloadsLimit - subDownloadsUsed);
 
+          if (subPerms.allocated_emails !== null && subPerms.allocated_emails !== undefined) {
+            const subEmailsLimit = isCustomPlan ? Number(subPerms.allocated_emails || 0) : 0;
+            const subEmailsUsed = Number(subPerms.used_emails || 0);
+            effectiveLimits.email_limit = subEmailsLimit;
+            effectiveUsage.email_limit = subEmailsLimit;
+            effectiveUsage.emails_sent = subEmailsUsed;
+            effectiveUsage.emails_remaining = Math.max(0, subEmailsLimit - subEmailsUsed);
+          }
+
+          if (subPerms.allocated_excel_downloads !== null && subPerms.allocated_excel_downloads !== undefined) {
+            const subExcelLimit = isCustomPlan ? Number(subPerms.allocated_excel_downloads || 0) : 0;
+            const subExcelUsed = Number(subPerms.used_excel_downloads || 0);
+            effectiveLimits.excel_download_limit = subExcelLimit;
+            effectiveLimits.excel_downloads_limit = subExcelLimit;
+            effectiveUsage.excel_download_limit = subExcelLimit;
+            effectiveUsage.excel_downloads_limit = subExcelLimit;
+            effectiveUsage.excel_downloads_used = subExcelUsed;
+            effectiveUsage.excel_downloads_remaining = Math.max(0, subExcelLimit - subExcelUsed);
+          }
+
           if (effectiveUsage.job_posts_remaining <= 0 || companyRemainingActive <= 0 || companyRemainingJobs <= 0) {
             effectivePermissions.can_post_jobs = false;
           }
         }
+        effectivePermissions.can_export_excel = subPerms.can_export_excel !== false && isCustomPlan;
       } else {
         effectivePermissions.can_manage_team = true;
         effectivePermissions.can_manage_billing = true;
@@ -465,6 +495,8 @@ const RecruiterSubscriptionController = {
         console.warn("Could not query company info in RecruiterSubscriptionController:", coErr.message);
       }
 
+      const displayPlanName = isCustomPlan ? 'Custom Plan' : (sub.plan_name ? sub.plan_name.replace(/\s*-\s*user\s*\d+/gi, '').trim() : 'Recruiter');
+
       res.status(200).json({
         success: true,
         has_subscription: true,
@@ -474,7 +506,8 @@ const RecruiterSubscriptionController = {
           company: companyInfo,
           subscription_id: sub.subscription_id,
           plan_id: sub.plan_id,
-          plan_name: sub.plan_name,
+          plan_name: displayPlanName,
+          raw_plan_name: sub.plan_name,
           plan_slug: sub.plan_slug,
           plan_price: sub.plan_price,
           billing_cycle: sub.billing_cycle,
@@ -490,11 +523,20 @@ const RecruiterSubscriptionController = {
 
           plan: {
             id: sub.plan_id,
-            name: sub.plan_name,
+            name: displayPlanName,
+            raw_name: sub.plan_name,
             slug: sub.plan_slug,
             price: sub.plan_price,
             plan_type: sub.plan_type,
-            description: sub.plan_description
+            description: sub.plan_description,
+            job_post_limit: sub.job_post_limit,
+            active_job_limit: sub.active_job_limit,
+            sub_recruiter_limit: teamSubRecruiterLimit,
+            email_limit: Number(sub.email_limit || 0),
+            whatsapp_limit: Number(sub.whatsapp_limit || 0),
+            resume_view_limit: Number(sub.resume_view_limit || 0),
+            resume_download_limit: Number(sub.resume_download_limit || 0),
+            excel_download_limit: Number(sub.excel_download_limit || 0),
           },
 
           limits: effectiveLimits,

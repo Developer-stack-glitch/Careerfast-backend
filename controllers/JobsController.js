@@ -1074,7 +1074,11 @@ const deleteProject = async (request, response) => {
 };
 
 const saveJobPost = async (request, response) => {
-  const { user_id, job_post_id } = request.body;
+  const user_id = request.body.user_id || request.user?.id;
+  const job_post_id = request.body.job_post_id || request.body.jobId;
+  if (!user_id || !job_post_id) {
+    return response.status(400).json({ message: "Missing user_id or job_post_id" });
+  }
   try {
     const result = await JobsModel.saveJobPost(user_id, job_post_id);
     response.status(201).send({
@@ -1083,14 +1087,54 @@ const saveJobPost = async (request, response) => {
     });
   } catch (error) {
     response.status(500).json({
-      message: "Error while add this job to your watchlist",
+      message: "Error while adding this job to your watchlist",
       details: error.message,
     });
   }
 };
 
+const createJobAlert = async (request, response) => {
+  const { user_id, email, phone, job_id, job_title, location, experience, category, skills, frequency } = request.body;
+  const effectiveUserId = user_id || request.user?.id || null;
+  if (!email || !job_title) {
+    return response.status(400).json({ success: false, message: "Email and job title are required" });
+  }
+  try {
+    const result = await JobsModel.createJobAlert({
+      user_id: effectiveUserId,
+      email,
+      phone,
+      job_id,
+      job_title,
+      location,
+      experience,
+      category,
+      skills,
+      frequency
+    });
+    return response.status(201).json({
+      success: true,
+      message: "Job alert created successfully! We will send you similar jobs.",
+      data: result
+    });
+  } catch (error) {
+    console.error("Error creating job alert:", error);
+    return response.status(500).json({
+      success: false,
+      message: "Error while creating job alert",
+      details: error.message
+    });
+  }
+};
+
 const getSavedJobs = async (request, response) => {
-  const { user_id } = request.query;
+  const user_id = request.query.user_id || request.user?.id;
+  if (!user_id) {
+    return response.status(200).send({
+      message: "No user id provided",
+      data: [],
+    });
+  }
   try {
     const savedJobs = await JobsModel.getSavedJobs(user_id);
     response.status(200).send({
@@ -1106,9 +1150,11 @@ const getSavedJobs = async (request, response) => {
 };
 
 const removeSavedJobs = async (request, response) => {
-  const { id } = request.query;
+  const id = request.query.id || request.body?.id;
+  const user_id = request.query.user_id || request.body?.user_id || request.user?.id;
+  const job_post_id = request.query.job_post_id || request.body?.job_post_id || request.query.jobId || request.body?.jobId;
   try {
-    const result = await JobsModel.removeSavedJobs(id);
+    const result = await JobsModel.removeSavedJobs(id, user_id, job_post_id);
     response.status(200).send({
       message: "This job has been removed from your watchlist",
       data: result,
@@ -2350,6 +2396,7 @@ module.exports = {
   getCourseType,
   deleteProject,
   saveJobPost,
+  createJobAlert,
   getSavedJobs,
   removeSavedJobs,
   checkIsJobApplied,

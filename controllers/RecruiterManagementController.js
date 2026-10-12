@@ -306,6 +306,79 @@ const RecruiterManagementController = {
         details: error.message
       });
     }
+  },
+
+  getMasterRecruiters: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const data = await RecruiterManagementModel.getMasterRecruiters(id);
+      res.status(200).json({
+        success: true,
+        data
+      });
+    } catch (error) {
+      console.error("Error fetching master recruiters:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to fetch master recruiters.",
+        details: error.message
+      });
+    }
+  },
+
+  addMasterRecruiter: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { email, password, first_name, last_name, phone } = req.body;
+      if (!email || !password || !first_name) {
+        return res.status(400).json({
+          success: false,
+          message: "First name, email, and password are required."
+        });
+      }
+
+      const adminId = req.user?.id || 1;
+      const result = await RecruiterManagementModel.addMasterRecruiter(id, req.body, adminId);
+      res.status(201).json({
+        success: true,
+        message: "Master Recruiter added successfully.",
+        data: result
+      });
+    } catch (error) {
+      console.error("Error adding master recruiter:", error);
+      res.status(400).json({
+        success: false,
+        message: error.message || "Failed to add master recruiter.",
+        details: error.message
+      });
+    }
+  },
+
+  updateMasterRecruiterSeats: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { allocated_seats } = req.body;
+      if (allocated_seats === undefined || isNaN(Number(allocated_seats)) || Number(allocated_seats) < 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid allocated_seats number is required (0 or greater)."
+        });
+      }
+
+      const adminId = req.user?.id || 1;
+      const result = await RecruiterManagementModel.updateMasterRecruiterSeats(id, Number(allocated_seats), adminId);
+      res.status(200).json({
+        success: true,
+        message: "Master Recruiter seat allocation updated successfully.",
+        data: result
+      });
+    } catch (error) {
+      console.error("Error updating master recruiter seats:", error);
+      res.status(400).json({
+        success: false,
+        message: error.message || "Failed to update master recruiter seats."
+      });
+    }
   }
 };
 

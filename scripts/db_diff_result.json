@@ -1,0 +1,22 @@
+{
+  "summary": {
+    "localTablesCount": 66,
+    "liveTablesCount": 66,
+    "missingTablesInLiveCount": 0,
+    "missingTablesInLocalCount": 0,
+    "missingColumnsInLiveCount": 1,
+    "missingColumnsInLocalCount": 0
+  },
+  "missingTablesInLive": [],
+  "missingTablesInLocal": [],
+  "sqlToAddTablesToLive": "",
+  "sqlToAddTablesToLocal": "",
+  "missingColumnsInLive": [
+    {
+      "table": "subscription_plans",
+      "col": "master_login_limit",
+      "query": "ALTER TABLE `subscription_plans` ADD COLUMN `master_login_limit` int(11) NOT NULL DEFAULT '1';"
+    }
+  ],
+  "missingColumnsInLocal": []
+}

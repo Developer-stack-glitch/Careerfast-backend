@@ -67,7 +67,8 @@ const SubRecruiterController = {
         return res.status(400).json({ success: false, message: "Valid status ('active' or 'suspended') is required." });
       }
 
-      const mainRecruiterId = req.user?.role_id === 1 ? null : req.user?.id;
+      const isSuperAdmin = Number(req.user?.role_id) === 1 || req.user?.role_name === 'SUPER-ADMIN' || req.user?.role_name === 'SUPERADMIN';
+      const mainRecruiterId = isSuperAdmin ? null : req.user?.id;
       await SubRecruiterModel.toggleStatus(subRecruiterRecordId, mainRecruiterId, status);
 
       return res.status(200).json({
@@ -84,7 +85,8 @@ const SubRecruiterController = {
   deleteSubRecruiter: async (req, res) => {
     try {
       const subRecruiterRecordId = req.params.id;
-      const mainRecruiterId = req.user?.role_id === 1 ? null : req.user?.id;
+      const isSuperAdmin = Number(req.user?.role_id) === 1 || req.user?.role_name === 'SUPER-ADMIN' || req.user?.role_name === 'SUPERADMIN';
+      const mainRecruiterId = isSuperAdmin ? null : req.user?.id;
 
       await SubRecruiterModel.deleteSubRecruiter(subRecruiterRecordId, mainRecruiterId);
       return res.status(200).json({
@@ -112,7 +114,7 @@ const SubRecruiterController = {
   // POST /api/admin/recruiters/:id/team (Super Admin adds sub-recruiter for client)
   createAdminSubRecruiter: async (req, res) => {
     try {
-      const mainRecruiterId = req.params.id;
+      const mainRecruiterId = req.body.master_recruiter_id || req.body.main_recruiter_id || req.params.id;
       const result = await SubRecruiterModel.createSubRecruiter(mainRecruiterId, req.body);
       return res.status(201).json({
         success: true,

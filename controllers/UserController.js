@@ -278,7 +278,7 @@ const getHrProfile = async (request, response) => {
     if (profile) {
       response.status(200).json({ message: "HR Profile retrieved successfully", data: profile });
     } else {
-      response.status(404).json({ message: "HR Profile not found" });
+      response.status(200).json({ message: "HR Profile not found", data: null });
     }
   } catch (error) {
     response.status(500).json({ message: "Error fetching HR Profile", details: error.message });

@@ -22,7 +22,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(
   cors({
     origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   })
@@ -54,7 +54,9 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // =======================
 //  API Routes
 // =======================
+const authRoutes = require("./routes/auth");
 app.use("/api", Routes);
+app.use("/auth", authRoutes);
 
 // =======================
 // 🔍 Health Check

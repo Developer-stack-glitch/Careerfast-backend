@@ -66,6 +66,9 @@ router.post("/admin/recruiters/:id/reset-password", verifyToken, verifySuperAdmi
 router.put("/admin/recruiters/:id/auto-approve", verifyToken, verifySuperAdmin, RecruiterManagementController.toggleAutoApprove);
 router.post("/admin/recruiters/:id/login-as", verifyToken, verifySuperAdmin, RecruiterManagementController.loginAsRecruiter);
 router.delete("/admin/recruiters/:id", verifyToken, verifySuperAdmin, RecruiterManagementController.deleteRecruiter);
+router.get("/admin/recruiters/:id/master-recruiters", verifyToken, verifySuperAdmin, RecruiterManagementController.getMasterRecruiters);
+router.post("/admin/recruiters/:id/master-recruiters", verifyToken, verifySuperAdmin, RecruiterManagementController.addMasterRecruiter);
+router.put("/admin/recruiters/master-recruiters/:id/seats", verifyToken, verifySuperAdmin, RecruiterManagementController.updateMasterRecruiterSeats);
 router.get("/admin/subscriptions", verifyToken, verifySuperAdmin, RecruiterManagementController.getAllSubscriptions);
 router.get("/admin/audit-logs", verifyToken, verifySuperAdmin, RecruiterManagementController.getAuditLogs);
 
@@ -98,11 +101,15 @@ router.get("/recruiter/team", verifyToken, SubRecruiterController.getTeam);
 router.post("/recruiter/team", verifyToken, SubRecruiterController.createSubRecruiter);
 router.put("/recruiter/team/:id/permissions", verifyToken, SubRecruiterController.updatePermissions);
 router.patch("/recruiter/team/:id/status", verifyToken, SubRecruiterController.toggleStatus);
+router.put("/recruiter/team/:id/status", verifyToken, SubRecruiterController.toggleStatus);
 router.delete("/recruiter/team/:id", verifyToken, SubRecruiterController.deleteSubRecruiter);
 
 // Super Admin Team Oversight
 router.get("/admin/recruiters/:id/team", verifyToken, verifySuperAdmin, SubRecruiterController.getAdminRecruiterTeam);
 router.post("/admin/recruiters/:id/team", verifyToken, verifySuperAdmin, SubRecruiterController.createAdminSubRecruiter);
+router.patch("/admin/recruiters/team/:id/status", verifyToken, verifySuperAdmin, SubRecruiterController.toggleStatus);
+router.put("/admin/recruiters/team/:id/status", verifyToken, verifySuperAdmin, SubRecruiterController.toggleStatus);
+router.delete("/admin/recruiters/team/:id", verifyToken, verifySuperAdmin, SubRecruiterController.deleteSubRecruiter);
 
 // ==========================================
 // 💼 Recruiter Dynamic Access Endpoint
@@ -278,6 +285,7 @@ router.get("/getCourseType", JobsController.getCourseType);
 
 router.delete("/deleteProject", verifyToken, JobsController.deleteProject);
 router.post("/saveJobPost", verifyToken, JobsController.saveJobPost);
+router.post("/createJobAlert", JobsController.createJobAlert);
 router.get("/getSavedJobs", verifyToken, JobsController.getSavedJobs);
 router.delete("/removeSavedJobs", verifyToken, JobsController.removeSavedJobs);
 router.get("/isProfileUpdated", verifyToken, userController.isProfileUpdated);

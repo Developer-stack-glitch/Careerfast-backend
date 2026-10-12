@@ -1145,7 +1145,45 @@ const UserModel = {
         WHERE h.user_id = ?
       `;
       const [rows] = await pool.query(query, [user_id]);
-      return rows[0];
+      if (rows && rows.length > 0) {
+        return rows[0];
+      }
+
+      // Fallback: Check if user belongs to a company or is a team/sub-recruiter linked to an HR profile
+      const fallbackQuery = `
+        SELECT
+          h.profile_image,
+          h.banner_image,
+          h.company_name,
+          h.about_us,
+          h.organization_type,
+          h.industry_type,
+          h.team_size,
+          h.year_established,
+          h.website_url,
+          h.vision,
+          h.map_location,
+          h.contact_phone,
+          h.contact_email,
+          CASE WHEN target_u.is_email_verified = 1 THEN 1 ELSE 0 END AS is_email_verified,
+          s.facebook,
+          s.twitter,
+          s.instagram,
+          s.linkedin as youtube
+        FROM users req_u
+        LEFT JOIN sub_recruiters sr ON sr.sub_recruiter_id = req_u.id
+        JOIN users target_u ON (
+          (req_u.company_id IS NOT NULL AND target_u.company_id = req_u.company_id)
+          OR (sr.main_recruiter_id IS NOT NULL AND target_u.id = sr.main_recruiter_id)
+        )
+        JOIN hr_profiles h ON h.user_id = target_u.id
+        LEFT JOIN user_social_links s ON h.user_id = s.user_id
+        WHERE req_u.id = ?
+        ORDER BY h.id DESC
+        LIMIT 1
+      `;
+      const [fallbackRows] = await pool.query(fallbackQuery, [user_id]);
+      return fallbackRows && fallbackRows.length > 0 ? fallbackRows[0] : null;
     } catch (error) {
       throw new Error(error.message);
     }

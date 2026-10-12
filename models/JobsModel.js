@@ -1952,10 +1952,30 @@ const JobsModel = {
 
   saveJobPost: async (user_id, job_post_id) => {
     try {
-      const insertQuery = `INSERT INTO user_saved_jobs (user_id, job_post_id, created_date) VALUES (?, ?, ?)`;
-      const values = [user_id, job_post_id, new Date()];
-      const [result] = await pool.query(insertQuery, values);
-      return result.affectedRows;
+      const [existing] = await pool.query(
+        `SELECT id FROM user_saved_jobs WHERE user_id = ? AND job_post_id = ? LIMIT 1`,
+        [user_id, job_post_id]
+      );
+      if (existing.length > 0) {
+        return { id: existing[0].id, alreadySaved: true };
+      }
+      const insertQuery = `INSERT INTO user_saved_jobs (user_id, job_post_id, created_date) VALUES (?, ?, NOW())`;
+      const [result] = await pool.query(insertQuery, [user_id, job_post_id]);
+      return { id: result.insertId, affectedRows: result.affectedRows };
+    } catch (error) {
+      throw new Error(error.message);
+    }
+  },
+
+  createJobAlert: async ({ user_id, email, phone, job_id, job_title, location, experience, category, skills, frequency }) => {
+    try {
+      const skillsStr = Array.isArray(skills) ? skills.join(", ") : (skills || null);
+      const [result] = await pool.query(
+        `INSERT INTO job_alerts (user_id, email, phone, job_id, job_title, location, experience, category, skills, frequency)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [user_id || null, email, phone || null, job_id || null, job_title, location || null, experience || null, category || null, skillsStr, frequency || 'Daily']
+      );
+      return { id: result.insertId, affectedRows: result.affectedRows };
     } catch (error) {
       throw new Error(error.message);
     }
@@ -1982,7 +2002,7 @@ const JobsModel = {
                     WHERE
                         sj.user_id = ?
                     ORDER BY
-                        sj.created_date`;
+                        sj.created_date DESC`;
       const [savedJobs] = await pool.query(query, [user_id]);
       const now = dayjs().tz("Asia/Kolkata");
       // Modify the date format
@@ -1998,12 +2018,19 @@ const JobsModel = {
     }
   },
 
-  removeSavedJobs: async (id) => {
+  removeSavedJobs: async (id, user_id, job_post_id) => {
     try {
-      const [result] = await pool.query(
-        `DELETE FROM user_saved_jobs WHERE id = ?`,
-        [id]
-      );
+      let query, params;
+      if (id) {
+        query = `DELETE FROM user_saved_jobs WHERE id = ?`;
+        params = [id];
+      } else if (user_id && job_post_id) {
+        query = `DELETE FROM user_saved_jobs WHERE user_id = ? AND job_post_id = ?`;
+        params = [user_id, job_post_id];
+      } else {
+        throw new Error("Missing parameters to remove saved job");
+      }
+      const [result] = await pool.query(query, params);
       return result.affectedRows;
     } catch (error) {
       throw new Error(error.message);
