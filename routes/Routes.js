@@ -203,6 +203,8 @@ router.get("/getUserJobPostStatus", userController.getUserJobPostStatus);
 router.post("/jobPosting", verifyToken, JobsController.jobPosting);
 router.put("/updateJobPosting", verifyToken, JobsController.updateJobPosting);
 router.post("/applyforjob", verifyToken, JobsController.applyForJob);
+router.post("/applyForJob", verifyToken, JobsController.applyForJob);
+router.post("/applyJob", verifyToken, JobsController.applyForJob);
 router.get(
   "/getJobAppliedCandidates",
   verifyToken,
