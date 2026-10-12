@@ -637,12 +637,12 @@ const RecruiterSubscriptionController = {
         (sub.plan_name && sub.plan_name.toLowerCase().includes('custom'))
       );
 
-      if (!isCustomPlan) {
+      if (!isCustomPlan && Number(sub.resume_view_limit || 0) <= 0) {
         return res.status(403).json({
           success: false,
           limit_reached: true,
           message: "Custom Plan Required",
-          details: `Your current ${sub.plan_name} Plan is configured for Job Posting only. Candidate profile and resume views are exclusive to Custom Plans. Please upgrade to a Custom Plan to access candidate resumes.`
+          details: `Your current ${sub.plan_name} Plan does not include candidate resume views. Candidate profile and resume views are available on plans with resume view quotas or Custom Plans. Please upgrade to access candidate resumes.`
         });
       }
 
@@ -812,12 +812,12 @@ const RecruiterSubscriptionController = {
         (sub.plan_name && sub.plan_name.toLowerCase().includes('custom'))
       );
 
-      if (!isCustomPlan) {
+      if (!isCustomPlan && Number(sub.resume_download_limit || 0) <= 0) {
         return res.status(403).json({
           success: false,
           limit_reached: true,
           message: "Custom Plan Required",
-          details: `Your current ${sub.plan_name} Plan is configured for Job Posting only. Resume downloads are exclusive to Custom Plans. Please upgrade to a Custom Plan to download resumes.`
+          details: `Your current ${sub.plan_name} Plan does not include resume downloads. Resume downloads are available on plans with resume download quotas or Custom Plans. Please upgrade to download resumes.`
         });
       }
 
@@ -945,12 +945,16 @@ const RecruiterSubscriptionController = {
 
       if (subRows.length > 0) {
         const sub = subRows[0];
-        const isExpired = new Date(sub.expiry_date) < new Date() || sub.status === 'Expired';
-        const isCustom = sub.plan_type?.toLowerCase() === 'custom' || sub.slug?.toLowerCase().startsWith('custom') || sub.name?.toLowerCase().includes('custom');
-        if (!isCustom || sub.candidate_contact === 0 || isExpired) {
+        if (isExpired) {
           return res.status(403).json({
             success: false,
-            message: "Direct candidate messaging is exclusive to Custom Plans. Your current plan is configured for Job Posting only."
+            message: "Your subscription has expired. Please renew your plan to contact candidates."
+          });
+        }
+        if (!isCustom && Number(sub.candidate_contact || 0) <= 0) {
+          return res.status(403).json({
+            success: false,
+            message: "Direct candidate messaging is exclusive to Custom Plans or plans with candidate contact permissions. Your current plan is configured for Job Posting only."
           });
         }
       } else {

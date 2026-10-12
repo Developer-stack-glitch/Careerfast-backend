@@ -29,7 +29,10 @@ const verifyOTP = async (request, response) => {
   try {
     const result = await EmailModel.verifyOTP(email, otp);
     if (result.success) {
-      response.status(200).send({ message: result.message });
+      response.status(200).send({
+        message: result.message,
+        reset_token: result.reset_token,
+      });
     } else {
       response.status(400).json({ error: result.message });
     }
@@ -44,7 +47,7 @@ const verifyOTP = async (request, response) => {
 const VerifyEmail = async (request, response) => {
   const { email } = request.body;
   if (!email) {
-    return res.status(400).json({ error: "Email is required" });
+    return response.status(400).json({ error: "Email is required" });
   }
   try {
     const result = await EmailModel.VerifyEmail(email);

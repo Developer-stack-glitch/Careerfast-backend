@@ -58,6 +58,29 @@ const sendVerificationEmail = async (email, role_id) => {
   }
 };
 
+// Map to track emails that have successfully verified OTP for password reset (15 min validity)
+const verifiedResets = new Map();
+
+const isResetAuthorized = (email, resetToken) => {
+  if (!email) return false;
+  const key = email.toLowerCase().trim();
+  const data = verifiedResets.get(key);
+  if (!data) return false;
+  if (Date.now() > data.expiresAt) {
+    verifiedResets.delete(key);
+    return false;
+  }
+  if (resetToken && data.resetToken && resetToken !== data.resetToken) {
+    return false;
+  }
+  return true;
+};
+
+const consumeResetAuthorization = (email) => {
+  if (!email) return;
+  verifiedResets.delete(email.toLowerCase().trim());
+};
+
 const verifyOTP = async (email, userOTP) => {
   const storedData = otpStorage.get(email);
 
@@ -72,12 +95,17 @@ const verifyOTP = async (email, userOTP) => {
 
   if (storedData.otp === userOTP) {
     otpStorage.delete(email);
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    verifiedResets.set(email.toLowerCase().trim(), {
+      resetToken,
+      expiresAt: Date.now() + 15 * 60 * 1000 // 15 minutes
+    });
     try {
       await pool.query("UPDATE users SET is_email_verified = 1 WHERE email = ?", [email]);
     } catch (error) {
       console.error("Failed to update email verification status", error);
     }
-    return { success: true, message: "Email verified successfully" };
+    return { success: true, message: "Email verified successfully", reset_token: resetToken };
   }
 
   return { success: false, message: "Invalid OTP" };
@@ -1144,5 +1172,7 @@ module.exports = {
   sendCandidateWelcomeEmail,
   sendCandidateDirectEmail,
   sendRecruiterWelcomeEmail,
+  isResetAuthorized,
+  consumeResetAuthorization,
 };
 

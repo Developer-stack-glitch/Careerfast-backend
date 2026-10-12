@@ -1,6 +1,6 @@
 const userModel = require("../models/UserModel");
 const admin = require("../config/firebase");
-const { sendApplicationStatusEmail, sendCandidateWelcomeEmail } = require("../models/EmailModel");
+const { sendApplicationStatusEmail, sendCandidateWelcomeEmail, isResetAuthorized, consumeResetAuthorization } = require("../models/EmailModel");
 const pool = require("../config/dbConfig");
 
 const getUsers = async (request, response) => {
@@ -163,9 +163,29 @@ const deleteUser = async (request, response) => {
 };
 
 const forgotPassword = async (request, response) => {
-  const { email, password, role_id } = request.body;
+  const { email, password, newPassword, role_id, reset_token } = request.body;
+  const targetPassword = password || newPassword;
+
+  if (!email || !targetPassword) {
+    return response.status(400).json({
+      message: "Email and new password are required",
+    });
+  }
+
+  // Security Check: Verify user is either authenticated with matching email,
+  // or has recently verified OTP for this email.
+  const isAuthenticatedUser = request.user && request.user.email && request.user.email.toLowerCase() === email.toLowerCase();
+  const hasValidOtpReset = isResetAuthorized(email, reset_token);
+
+  if (!isAuthenticatedUser && !hasValidOtpReset) {
+    return response.status(403).json({
+      message: "Password reset authorization required. Please verify OTP first.",
+    });
+  }
+
   try {
-    const result = await userModel.forgotPassword(email, password, role_id);
+    const result = await userModel.forgotPassword(email, targetPassword, role_id);
+    consumeResetAuthorization(email);
     response.status(200).json({
       message: "Password changed successfully",
       data: result,
@@ -356,16 +376,26 @@ const getUserAppliedJobs = async (request, response) => {
   try {
     const result = await userModel.getUserAppliedJobs(userId);
 
+    const safeParse = (val, fallback = []) => {
+      if (!val) return fallback;
+      if (typeof val === 'object') return val;
+      try {
+        return JSON.parse(val);
+      } catch (e) {
+        return typeof val === 'string' && val.includes(',') ? val.split(',').map(s => s.trim()) : val;
+      }
+    };
+
     const formattedResult = result.map(({ id, applied_job_id, ...item }) => {
       return {
         ...item,
         id: applied_job_id,
-        duration_period: JSON.parse(item.duration_period),
-        skills: JSON.parse(item.skills),
-        experience_required: JSON.parse(item.experience_required),
-        diversity_hiring: JSON.parse(item.diversity_hiring),
-        job_category: JSON.parse(item.job_category),
-        benefits: JSON.parse(item.benefits),
+        duration_period: safeParse(item.duration_period, item.duration_period),
+        skills: safeParse(item.skills, []),
+        experience_required: safeParse(item.experience_required, item.experience_required),
+        diversity_hiring: safeParse(item.diversity_hiring, []),
+        job_category: safeParse(item.job_category, []),
+        benefits: safeParse(item.benefits, []),
       };
     });
 
@@ -515,7 +545,11 @@ const getUserType = async (request, response) => {
 
 const updateBasicDetails = async (request, response) => {
   try {
-    const result = await userModel.updateBasicDetails(request.body);
+    const payload = { ...request.body };
+    if (request.user && request.user.id && request.user.role_id !== 1) {
+      payload.user_id = request.user.id;
+    }
+    const result = await userModel.updateBasicDetails(payload);
     response.status(200).send({
       message: "Updated successfully",
       data: result,
@@ -529,7 +563,7 @@ const updateBasicDetails = async (request, response) => {
 };
 
 const updateEducation = async (request, response) => {
-  const user_id = request.body.user_id;
+  const user_id = (request.user?.role_id !== 1 && request.user?.id) ? request.user.id : request.body.user_id;
   const id = request.body.id;
   const qualification = request.body.qualification || request.body.education_level;
   const course = request.body.course || request.body.degree_name || request.body.degree;

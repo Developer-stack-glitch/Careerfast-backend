@@ -497,8 +497,9 @@ const jobPosting = async (request, response) => {
     const [userRows] = await pool.query(`SELECT auto_approve, role_id FROM users WHERE id = ?`, [effectiveRecruiterId || user_id]);
     const isAutoApprove = userRows[0]?.auto_approve === 1 || userRows[0]?.role_id === 1; // superadmins also auto-approve
 
-    if (isAutoApprove && result?.insertId) {
-      await pool.query(`UPDATE job_post SET approval_status = 'approved', approved_at = NOW() WHERE id = ?`, [result.insertId]);
+    const insertedJobId = result?.insertId || (typeof result === 'number' ? result : null);
+    if (isAutoApprove && insertedJobId) {
+      await pool.query(`UPDATE job_post SET approval_status = 'approved', approved_at = NOW() WHERE id = ?`, [insertedJobId]);
     }
 
     return response.status(201).send({

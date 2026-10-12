@@ -536,7 +536,16 @@ const UserModel = {
         get_appliedjob_query,
         appliedjob_value
       );
+      if (!appliedjob_data || appliedjob_data.length === 0) {
+        throw new Error("Application not found for the given user and job post");
+      }
       const appliedjob_id = appliedjob_data[0].id;
+
+      // Update primary application status so candidate and recruiter views stay synchronized
+      await pool.query(
+        `UPDATE applied_jobs SET status = ? WHERE id = ?`,
+        [status, appliedjob_id]
+      );
 
       const query = `INSERT INTO applied_job_status_history (applied_job_id, status, user_id) VALUES(?,?,?)`;
       const values = [appliedjob_id, status, appliedjob_data[0].userId];

@@ -380,7 +380,7 @@ const JobsModel = {
         }
       }
 
-      return result.affectedRows;
+      return { affectedRows: result.affectedRows, insertId: lastJobPostId };
     } catch (error) {
       throw new Error(error.message);
     }
@@ -1378,6 +1378,10 @@ const JobsModel = {
           whereClauses.push(`job_post.approval_status = ?`);
           queryParams.push(filters.approval_status);
         }
+      } else if (!filters.user_id && !filters.admin_user_id && !filters.approval_status && !filters.id) {
+        // Safe default for public candidate job searches / landing pages:
+        // Only show approved jobs to public users
+        whereClauses.push(`job_post.approval_status = 'approved'`);
       }
 
       // Check if hr_profiles or users join is needed in count and id query

@@ -1687,6 +1687,7 @@ const RecruiterManagementModel = {
       await connection.query("DELETE FROM sub_recruiters WHERE main_recruiter_id = ? OR sub_recruiter_id = ?", [id, id]).catch(() => {});
       await connection.query("DELETE FROM hr_profile WHERE user_id = ?", [id]).catch(() => {});
       await connection.query("DELETE FROM hr_profiles WHERE user_id = ?", [id]).catch(() => {});
+      await connection.query("UPDATE job_post SET is_closed = 1, approval_status = 'rejected' WHERE user_id = ?", [id]).catch(() => {});
       await connection.query("DELETE FROM users WHERE id = ?", [id]);
 
       await connection.commit();
