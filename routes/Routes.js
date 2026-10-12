@@ -142,7 +142,8 @@ router.get("/industry/type/get", IndustryController.getIndustryTypes);
 router.get("/industry-types", IndustryController.getIndustryTypes);
 
 // Billing Plan APIs
-router.get("/getBillingPlans", verifyToken, BillingPlanController.getBillingPlans);
+router.get("/getBillingPlans", BillingPlanController.getBillingPlans);
+router.get("/pricing/plans", BillingPlanController.getBillingPlans);
 router.put("/updateBillingPlan", verifyToken, BillingPlanController.updateBillingPlan);
 
 // Settings APIs

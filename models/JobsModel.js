@@ -482,7 +482,7 @@ const JobsModel = {
         google_maps_url = ?,
         team_members = ?,
         apply_link = ?
-      WHERE id = ? AND user_id = ?
+      WHERE id = ?
     `;
 
       const values = [
@@ -529,8 +529,7 @@ const JobsModel = {
         google_maps_url,
         JSON.stringify(team_members),
         apply_link,
-        job_post_id,
-        user_id
+        job_post_id
       ];
 
       // Insert new categories into job_categories table if they don't exist
@@ -569,11 +568,16 @@ const JobsModel = {
 
       // Update Questions (delete and insert)
       await pool.query("DELETE FROM job_post_questions WHERE post_id = ?", [job_post_id]);
-      if (questions && questions.length > 0) {
+      const validQuestions = Array.isArray(questions)
+        ? questions.filter(q => q && typeof q === 'object' && q.question && String(q.question).trim() !== "")
+        : [];
+      if (validQuestions.length > 0) {
         const query = `INSERT INTO job_post_questions (post_id, question, isrequired) VALUES ?`;
-        const values = questions.map(q => [job_post_id, q.question, q.isrequired]);
+        const values = validQuestions.map(q => [job_post_id, q.question, q.isrequired ? 1 : 0]);
         await pool.query(query, [values]);
       }
+
+      if (jobPostsCache) jobPostsCache.clear();
 
       return result.affectedRows;
     } catch (error) {

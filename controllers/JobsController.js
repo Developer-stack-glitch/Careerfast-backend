@@ -1794,20 +1794,73 @@ const updateJobPosting = async (request, response) => {
     company_logo = company_logo.src || (company_logo.default && company_logo.default.src) || JSON.stringify(company_logo);
   }
 
-  const formattedDuration = Array.isArray(duration_period) ? duration_period : [duration_period];
-  const formattedJobCategory = Array.isArray(job_category) ? job_category : [job_category];
-  const formattedSkills = Array.isArray(skills) ? skills : [skills];
-  const formattedExpReq = Array.isArray(experience_required) ? experience_required : [experience_required];
-  const formattedDiversity = Array.isArray(diversity_hiring) ? diversity_hiring : [diversity_hiring];
-  const formattedBenefits = Array.isArray(benefits) ? benefits : [benefits];
-  const formatQuestions = Array.isArray(questions) ? questions : [questions];
-  const formattedWorkLocation = Array.isArray(work_location) ? work_location : [work_location];
-  const formattedLanguages = Array.isArray(languages) ? languages : [languages].filter(Boolean);
+  const formattedDuration = Array.isArray(duration_period) ? duration_period : (duration_period ? [duration_period] : ["Permanent"]);
+  const formattedJobCategory = Array.isArray(job_category) ? job_category : (job_category ? [job_category] : []);
+  const formattedSkills = Array.isArray(skills) ? skills : (skills ? [skills] : []);
+  const formattedExpReq = Array.isArray(experience_required) ? experience_required : (experience_required ? [experience_required] : []);
+  const formattedDiversity = Array.isArray(diversity_hiring) ? diversity_hiring : (diversity_hiring ? [diversity_hiring] : []);
+  const formattedBenefits = Array.isArray(benefits) ? benefits : (benefits ? [benefits] : []);
+  const formatQuestions = Array.isArray(questions)
+    ? questions.filter(q => q && typeof q === 'object' && q.question)
+    : (questions && typeof questions === 'object' && questions.question ? [questions] : []);
+  const formattedWorkLocation = Array.isArray(work_location) ? work_location : (work_location ? [work_location] : ["Pan India"]);
+  const formattedLanguages = Array.isArray(languages) ? languages : (languages ? [languages] : []);
 
   try {
-    const result = await JobsModel.updateJobPosting(
-      job_post_id,
-      user_id,
+    const targetJobId = job_post_id || request.body.id;
+    if (!targetJobId) {
+      return response.status(400).send({
+        success: false,
+        message: "Job post ID is required.",
+      });
+    }
+
+    const [existingJobs] = await pool.query(
+      "SELECT id, user_id FROM job_post WHERE id = ?",
+      [targetJobId]
+    );
+
+    if (!existingJobs || existingJobs.length === 0) {
+      return response.status(404).send({
+        success: false,
+        message: "Job post not found.",
+      });
+    }
+
+    const currentJob = existingJobs[0];
+    const requestingUserId = request.user?.id || user_id;
+    const isSuperAdmin = request.user?.role_id === 1 || request.user?.role_name === 'SUPER-ADMIN' || request.user?.role_name === 'SUPERADMIN';
+    let isAuthorized = isSuperAdmin || (Number(currentJob.user_id) === Number(requestingUserId));
+
+    if (!isAuthorized && requestingUserId) {
+      const [userRows] = await pool.query(
+        "SELECT id, company_id, master_recruiter_id FROM users WHERE id IN (?, ?)",
+        [currentJob.user_id, requestingUserId]
+      );
+      if (userRows.length >= 1) {
+        const jobOwner = userRows.find(u => Number(u.id) === Number(currentJob.user_id));
+        const requestingUser = userRows.find(u => Number(u.id) === Number(requestingUserId));
+        if (
+          (jobOwner?.company_id && requestingUser?.company_id && Number(jobOwner.company_id) === Number(requestingUser.company_id)) ||
+          (requestingUser?.master_recruiter_id && Number(requestingUser.master_recruiter_id) === Number(jobOwner?.id)) ||
+          (jobOwner?.master_recruiter_id && Number(jobOwner.master_recruiter_id) === Number(requestingUser?.id)) ||
+          (jobOwner?.master_recruiter_id && requestingUser?.master_recruiter_id && Number(jobOwner.master_recruiter_id) === Number(requestingUser.master_recruiter_id))
+        ) {
+          isAuthorized = true;
+        }
+      }
+    }
+
+    if (!isAuthorized) {
+      return response.status(403).send({
+        success: false,
+        message: "You are not authorized to edit this job post.",
+      });
+    }
+
+    await JobsModel.updateJobPosting(
+      targetJobId,
+      currentJob.user_id,
       company_name,
       company_logo,
       about_company,
@@ -1853,11 +1906,11 @@ const updateJobPosting = async (request, response) => {
       team_members,
       apply_link
     );
-    if (result > 0) {
-      response.send({ message: "Job updated successfully", success: true });
-    } else {
-      response.status(404).send({ message: "Job post not found or you are not authorized to edit it.", success: false });
-    }
+
+    return response.status(200).send({
+      message: "Job updated successfully",
+      success: true
+    });
   } catch (error) {
     console.error("Error in updateJobPosting:", error);
     response.status(500).send({
