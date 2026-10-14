@@ -21,10 +21,10 @@ const login = async (request, response) => {
     if (result && result.length > 0) {
       const token = generateToken(result[0]);
 
-      // ✅ Update last active timestamp
-      await pool.query(`UPDATE users SET last_active = NOW() WHERE id = ?`, [
+      // ✅ Update last login and last active timestamp
+      await pool.query(`UPDATE users SET last_login = NOW(), last_active = NOW() WHERE id = ?`, [
         result[0].id,
-      ]).catch(err => console.error("⚠️ Failed to update last_active on login:", err.message));
+      ]).catch(err => console.error("⚠️ Failed to update last_login on login:", err.message));
 
       // ✅ Save FCM token in DB
       if (fcm_token) {

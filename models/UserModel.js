@@ -2,7 +2,7 @@ const pool = require("../config/dbConfig");
 const bcrypt = require("bcrypt");
 
 const UserModel = {
-  getUsers: async (page = null, limit = null, search = "", status = "", role = null, startDate = null, endDate = null, timeFilter = null) => {
+  getUsers: async (page = null, limit = null, search = "", status = "", role = null, startDate = null, endDate = null, timeFilter = null, sortBy = null, sortOrder = null) => {
     try {
       // Calculate global stats (respecting search, ignoring status)
       let baseQuery = `SELECT u.is_active FROM users u WHERE 1=1`;
@@ -23,31 +23,31 @@ const UserModel = {
       let dateCondition = "";
       let dateParams = [];
       if (startDate && endDate) {
-        dateCondition = " AND (DATE(COALESCE(u.last_active, u.created_date)) BETWEEN ? AND ? OR DATE(u.created_date) BETWEEN ? AND ?)";
-        dateParams = [startDate, endDate, startDate, endDate];
+        dateCondition = " AND DATE(COALESCE(u.last_login, u.created_date)) BETWEEN ? AND ?";
+        dateParams = [startDate, endDate];
       } else if (startDate) {
-        dateCondition = " AND (DATE(COALESCE(u.last_active, u.created_date)) >= ? OR DATE(u.created_date) >= ?)";
-        dateParams = [startDate, startDate];
+        dateCondition = " AND DATE(COALESCE(u.last_login, u.created_date)) >= ?";
+        dateParams = [startDate];
       } else if (endDate) {
-        dateCondition = " AND (DATE(COALESCE(u.last_active, u.created_date)) <= ? OR DATE(u.created_date) <= ?)";
-        dateParams = [endDate, endDate];
+        dateCondition = " AND DATE(COALESCE(u.last_login, u.created_date)) <= ?";
+        dateParams = [endDate];
       } else if (timeFilter) {
         if (timeFilter === "Today") {
-          dateCondition = " AND (DATE(COALESCE(u.last_active, u.created_date)) = CURDATE() OR DATE(u.created_date) = CURDATE())";
+          dateCondition = " AND DATE(COALESCE(u.last_login, u.created_date)) = CURDATE()";
         } else if (timeFilter === "Yesterday") {
-          dateCondition = " AND (DATE(COALESCE(u.last_active, u.created_date)) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) OR DATE(u.created_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY))";
+          dateCondition = " AND DATE(COALESCE(u.last_login, u.created_date)) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)";
         } else if (timeFilter === "Last 7 Days") {
-          dateCondition = " AND (COALESCE(u.last_active, u.created_date) >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR u.created_date >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
+          dateCondition = " AND COALESCE(u.last_login, u.created_date) >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
         } else if (timeFilter === "Last 30 Days") {
-          dateCondition = " AND (COALESCE(u.last_active, u.created_date) >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY))";
+          dateCondition = " AND COALESCE(u.last_login, u.created_date) >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
         } else if (timeFilter === "This Month") {
-          dateCondition = " AND (COALESCE(u.last_active, u.created_date) >= DATE_FORMAT(NOW(), '%Y-%m-01') OR u.created_date >= DATE_FORMAT(NOW(), '%Y-%m-01'))";
+          dateCondition = " AND COALESCE(u.last_login, u.created_date) >= DATE_FORMAT(NOW(), '%Y-%m-01')";
         } else if (timeFilter === "Last Month") {
-          dateCondition = " AND ((COALESCE(u.last_active, u.created_date) >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND COALESCE(u.last_active, u.created_date) < DATE_FORMAT(NOW(), '%Y-%m-01')) OR (u.created_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.created_date < DATE_FORMAT(NOW(), '%Y-%m-01')))";
+          dateCondition = " AND (COALESCE(u.last_login, u.created_date) >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND COALESCE(u.last_login, u.created_date) < DATE_FORMAT(NOW(), '%Y-%m-01'))";
         } else if (timeFilter === "This Quarter") {
-          dateCondition = " AND (COALESCE(u.last_active, u.created_date) >= DATE_SUB(NOW(), INTERVAL 3 MONTH) OR u.created_date >= DATE_SUB(NOW(), INTERVAL 3 MONTH))";
+          dateCondition = " AND COALESCE(u.last_login, u.created_date) >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
         } else if (timeFilter === "This Year") {
-          dateCondition = " AND (COALESCE(u.last_active, u.created_date) >= DATE_SUB(NOW(), INTERVAL 1 YEAR) OR u.created_date >= DATE_SUB(NOW(), INTERVAL 1 YEAR))";
+          dateCondition = " AND COALESCE(u.last_login, u.created_date) >= DATE_SUB(NOW(), INTERVAL 1 YEAR)";
         }
       }
 
@@ -67,10 +67,34 @@ const UserModel = {
       const stats = statsResult[0] || { total: 0, active: 0, pending: 0 };
 
       let query = `
-        SELECT u.*, r.name AS role_name, ot.name AS organization_type 
+        SELECT 
+          u.*, 
+          r.name AS role_name, 
+          ot.name AS organization_type,
+          ue.qualification AS education_qualification,
+          ue.course AS education_course,
+          ue.college AS education_college,
+          COALESCE(
+            NULLIF(CONCAT_WS(' - ', NULLIF(ue.course, ''), NULLIF(ue.college, '')), ''),
+            NULLIF(ue.college, ''), 
+            NULLIF(ue.course, ''), 
+            NULLIF(ue.qualification, ''), 
+            NULLIF(u.course, ''), 
+            NULLIF(u.class, '')
+          ) AS display_education
         FROM users u 
         LEFT JOIN role r ON u.role_id = r.id
         LEFT JOIN organization_type ot ON u.organization_type_id = ot.id
+        LEFT JOIN (
+          SELECT user_id, qualification, course, college 
+          FROM (
+            SELECT user_id, qualification, course, college, 
+                   ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY id DESC) as rn 
+            FROM user_education 
+            WHERE is_deleted = 0
+          ) ranked 
+          WHERE rn = 1
+        ) ue ON u.id = ue.user_id
         WHERE 1=1
       `;
       let queryParams = [];
@@ -100,6 +124,20 @@ const UserModel = {
         query += ` AND (u.is_active = 0 OR u.is_active IS NULL)`;
       }
 
+      // Build dynamic ORDER BY clause
+      let orderByClause = " ORDER BY COALESCE(u.last_login, u.created_date) DESC, u.id DESC";
+      const dir = (sortOrder && String(sortOrder).toLowerCase() === 'asc') ? 'ASC' : 'DESC';
+
+      if (sortBy === 'candidate' || sortBy === 'employer') {
+        orderByClause = ` ORDER BY NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), '') ${dir}, u.email ${dir}`;
+      } else if (sortBy === 'education') {
+        orderByClause = ` ORDER BY display_education ${dir}, u.location ${dir}`;
+      } else if (sortBy === 'status') {
+        orderByClause = ` ORDER BY u.is_active ${dir}, u.id ${dir}`;
+      } else if (sortBy === 'last_login' || sortBy === 'last_active') {
+        orderByClause = ` ORDER BY COALESCE(u.last_login, u.created_date) ${dir}, u.id ${dir}`;
+      }
+
       // We need total count for pagination before applying LIMIT
       let totalCount = 0;
       if (page && limit) {
@@ -107,9 +145,13 @@ const UserModel = {
         const [countResult] = await pool.query(countQuery, queryParams);
         totalCount = countResult[0].total;
 
+        query += orderByClause;
+
         const offset = (parseInt(page) - 1) * parseInt(limit);
         query += ` LIMIT ? OFFSET ?`;
         queryParams.push(parseInt(limit), offset);
+      } else {
+        query += orderByClause;
       }
 
       const [users] = await pool.query(query, queryParams);
@@ -117,6 +159,7 @@ const UserModel = {
       const formattedUsers = users.map(user => ({
         ...user,
         last_active: user.last_active || user.updated_date || user.created_date,
+        last_login: user.last_login || user.created_date,
         skills: (() => {
           try {
             return user.skills ? JSON.parse(user.skills) : [];
@@ -953,7 +996,7 @@ const UserModel = {
                     LEFT JOIN organization_type ot ON
                       u.organization_type_id = ot.id
                     WHERE
-                        u.is_active = 1 AND u.id = ?`;
+                        u.id = ?`;
       // Define queries
       const educationQuery = `SELECT
                                   u.id,

@@ -100,9 +100,9 @@ exports.googleLogin = async (req, res) => {
         user.profile_image = picture;
       }
 
-      // Update last active
+      // Update last active and last login
       await pool
-        .query("UPDATE users SET last_active = NOW() WHERE id = ?", [user.id])
+        .query("UPDATE users SET last_login = NOW(), last_active = NOW() WHERE id = ?", [user.id])
         .catch(() => {});
     } else {
       // New user registration via Google (Candidate role)
@@ -120,8 +120,9 @@ exports.googleLogin = async (req, res) => {
           is_active,
           allocated_seats,
           created_date,
+          last_login,
           last_active
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 0, NOW(), NOW())
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 0, NOW(), NOW(), NOW())
       `;
 
       const [insertResult] = await pool.query(insertQuery, [

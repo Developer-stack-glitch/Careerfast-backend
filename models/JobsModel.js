@@ -3100,10 +3100,10 @@ const JobsModel = {
         pool.query(`SELECT COUNT(*) as total FROM job_post WHERE 1=1${jDateCond}`),
         pool.query(`SELECT COUNT(*) as total FROM applied_jobs WHERE 1=1${jDateCond}`),
         pool.query(`
-          SELECT id, first_name, last_name, email, phone, location, created_date, is_active, profile_image 
+          SELECT id, first_name, last_name, email, phone, location, created_date, is_active, profile_image, last_login 
           FROM users 
           WHERE role_id = 2 
-          ORDER BY created_date DESC
+          ORDER BY COALESCE(last_login, created_date) DESC
           LIMIT 10
         `),
         pool.query(`
@@ -3127,6 +3127,8 @@ const JobsModel = {
           SELECT 
               aj.id AS applied_jobs_id,
               aj.created_at,
+              u.id AS user_id,
+              u.profile_image,
               u.first_name,
               u.last_name,
               u.email,

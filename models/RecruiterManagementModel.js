@@ -446,7 +446,7 @@ const RecruiterManagementModel = {
         username,
         password,
 
-      // Subscription details
+        // Subscription details
         plan_id,
         custom_limits, // added
         billing_cycle = 'monthly',
@@ -469,16 +469,16 @@ const RecruiterManagementModel = {
       // 2. Fetch Plan to calculate defaults & limits
       let plan = null;
       if (plan_id === 'custom') {
-          plan = { id: 'custom', validity_days: 30, price: 0 };
+        plan = { id: 'custom', validity_days: 30, price: 0 };
       } else {
-          const [planRows] = await connection.query(
-            `SELECT * FROM subscription_plans WHERE id = ?`,
-            [plan_id]
-          );
-          if (planRows.length === 0) {
-            throw new Error(`Selected subscription plan not found.`);
-          }
-          plan = planRows[0];
+        const [planRows] = await connection.query(
+          `SELECT * FROM subscription_plans WHERE id = ?`,
+          [plan_id]
+        );
+        if (planRows.length === 0) {
+          throw new Error(`Selected subscription plan not found.`);
+        }
+        plan = planRows[0];
       }
 
       // 3. Calculate start and expiry dates
@@ -638,32 +638,32 @@ const RecruiterManagementModel = {
 
       // 8. Handle Custom Plan Creation
       if (plan.id === 'custom') {
-          const customPlanName = `Custom Plan - User ${newUserId}`;
-          const customSlug = `custom-user-${newUserId}-${Date.now()}`;
-          const limits = custom_limits || {};
-          const insertPlanQuery = `
+        const customPlanName = `Custom Plan - User ${newUserId}`;
+        const customSlug = `custom-user-${newUserId}-${Date.now()}`;
+        const limits = custom_limits || {};
+        const insertPlanQuery = `
             INSERT INTO subscription_plans (name, slug, description, plan_type, job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, resume_view_limit, resume_download_limit, sub_recruiter_limit, master_login_limit, email_limit, whatsapp_limit, excel_download_limit, validity_days, price, status)
             VALUES (?, ?, 'Custom plan configured by administrator', 'Custom', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30, 0, 1)
           `;
-          const [planResult] = await connection.query(insertPlanQuery, [
-            customPlanName,
-            customSlug,
-            limits.job_post_limit || 0,
-            limits.active_job_limit || 0,
-            limits.featured_job_limit || 0,
-            limits.urgent_job_limit || 0,
-            limits.resume_view_limit || 0,
-            limits.resume_download_limit || 0,
-            subRecruiterLimit,
-            masterLoginLimit,
-            limits.email_sent_count !== undefined ? (Number(limits.email_sent_count) || 0) : (Number(limits.email_limit) || 0),
-            limits.whatsapp_message_count !== undefined ? (Number(limits.whatsapp_message_count) || 0) : (limits.whatsapp_sent_count !== undefined ? (Number(limits.whatsapp_sent_count) || 0) : (Number(limits.whatsapp_limit) || 0)),
-            limits.excel_download_count !== undefined ? (Number(limits.excel_download_count) || 0) : (limits.excel_downloads_limit !== undefined ? (Number(limits.excel_downloads_limit) || 0) : (Number(limits.excel_download_limit) || 0))
-          ]);
-          plan.id = planResult.insertId;
+        const [planResult] = await connection.query(insertPlanQuery, [
+          customPlanName,
+          customSlug,
+          limits.job_post_limit || 0,
+          limits.active_job_limit || 0,
+          limits.featured_job_limit || 0,
+          limits.urgent_job_limit || 0,
+          limits.resume_view_limit || 0,
+          limits.resume_download_limit || 0,
+          subRecruiterLimit,
+          masterLoginLimit,
+          limits.email_sent_count !== undefined ? (Number(limits.email_sent_count) || 0) : (Number(limits.email_limit) || 0),
+          limits.whatsapp_message_count !== undefined ? (Number(limits.whatsapp_message_count) || 0) : (limits.whatsapp_sent_count !== undefined ? (Number(limits.whatsapp_sent_count) || 0) : (Number(limits.whatsapp_limit) || 0)),
+          limits.excel_download_count !== undefined ? (Number(limits.excel_download_count) || 0) : (limits.excel_downloads_limit !== undefined ? (Number(limits.excel_downloads_limit) || 0) : (Number(limits.excel_download_limit) || 0))
+        ]);
+        plan.id = planResult.insertId;
 
-          // Sync plan_id in companies
-          await connection.query(`UPDATE companies SET plan_id = ? WHERE id = ?`, [plan.id, realCompanyId]);
+        // Sync plan_id in companies
+        await connection.query(`UPDATE companies SET plan_id = ? WHERE id = ?`, [plan.id, realCompanyId]);
       }
 
       // 9. Create subscription in `recruiter_subscriptions`
@@ -1043,8 +1043,8 @@ const RecruiterManagementModel = {
       }
       const currentSub = subRows[0];
       const isOnlyJobPost = limits.plan_scope === 'only_job_post' || limits.is_only_job_post === true;
-      const customPlanName = isOnlyJobPost 
-        ? `Only Job Post - User ${recruiterId}` 
+      const customPlanName = isOnlyJobPost
+        ? `Only Job Post - User ${recruiterId}`
         : `Custom Plan - User ${recruiterId}`;
       const customSlug = `${isOnlyJobPost ? 'only-job-post' : 'custom'}-user-${recruiterId}-${Date.now()}`;
 
@@ -1094,7 +1094,7 @@ const RecruiterManagementModel = {
           INSERT INTO subscription_plans (name, slug, description, plan_type, candidate_search, candidate_contact, resume_database, job_post_limit, active_job_limit, featured_job_limit, urgent_job_limit, resume_view_limit, resume_download_limit, sub_recruiter_limit, master_login_limit, email_limit, whatsapp_limit, excel_download_limit, validity_days, price, status)
           VALUES (?, ?, ?, 'Custom', 1, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 30, 0, 1)
         `;
-        
+
         const [planResult] = await connection.query(insertPlanQuery, [
           customPlanName,
           customSlug,
@@ -1169,7 +1169,7 @@ const RecruiterManagementModel = {
         `INSERT INTO admin_audit_logs (admin_id, action, target_type, target_id, old_value, new_value)
          VALUES (?, 'Admin Custom Plan Set', 'recruiter', ?, ?, ?)`,
         [
-          adminId, 
+          adminId,
           String(recruiterId),
           JSON.stringify({ old_plan_id: currentSub.plan_id }),
           JSON.stringify({ new_plan_id: customPlanId, limits })
@@ -1178,7 +1178,7 @@ const RecruiterManagementModel = {
 
       await connection.commit();
       return { message: "Custom plan limits applied successfully." };
-    } catch(err) {
+    } catch (err) {
       await connection.rollback();
       throw err;
     } finally {
@@ -1658,7 +1658,7 @@ const RecruiterManagementModel = {
       recruiter.impersonated_by_admin = true;
 
       // Update recruiter last active
-      await pool.query(`UPDATE users SET last_active = NOW() WHERE id = ?`, [recruiter.id]).catch(() => {});
+      await pool.query(`UPDATE users SET last_active = NOW() WHERE id = ?`, [recruiter.id]).catch(() => { });
 
       // Sign JWT token
       const token = jwt.sign(
@@ -1681,13 +1681,13 @@ const RecruiterManagementModel = {
     try {
       await connection.beginTransaction();
 
-      await connection.query("DELETE FROM recruiter_audit_logs WHERE recruiter_id = ?", [id]).catch(() => {});
-      await connection.query("DELETE FROM subscription_usage WHERE recruiter_id = ?", [id]).catch(() => {});
-      await connection.query("DELETE FROM recruiter_subscriptions WHERE recruiter_id = ?", [id]).catch(() => {});
-      await connection.query("DELETE FROM sub_recruiters WHERE main_recruiter_id = ? OR sub_recruiter_id = ?", [id, id]).catch(() => {});
-      await connection.query("DELETE FROM hr_profile WHERE user_id = ?", [id]).catch(() => {});
-      await connection.query("DELETE FROM hr_profiles WHERE user_id = ?", [id]).catch(() => {});
-      await connection.query("UPDATE job_post SET is_closed = 1, approval_status = 'rejected' WHERE user_id = ?", [id]).catch(() => {});
+      await connection.query("DELETE FROM recruiter_audit_logs WHERE recruiter_id = ?", [id]).catch(() => { });
+      await connection.query("DELETE FROM subscription_usage WHERE recruiter_id = ?", [id]).catch(() => { });
+      await connection.query("DELETE FROM recruiter_subscriptions WHERE recruiter_id = ?", [id]).catch(() => { });
+      await connection.query("DELETE FROM sub_recruiters WHERE main_recruiter_id = ? OR sub_recruiter_id = ?", [id, id]).catch(() => { });
+      await connection.query("DELETE FROM hr_profile WHERE user_id = ?", [id]).catch(() => { });
+      await connection.query("DELETE FROM hr_profiles WHERE user_id = ?", [id]).catch(() => { });
+      await connection.query("UPDATE job_post SET is_closed = 1, approval_status = 'rejected' WHERE user_id = ?", [id]).catch(() => { });
       await connection.query("DELETE FROM users WHERE id = ?", [id]);
 
       await connection.commit();
@@ -1838,7 +1838,7 @@ const RecruiterManagementModel = {
           `INSERT INTO recruiter_subscriptions (
              recruiter_id, company_id, plan_id, billing_cycle, price_paid,
              start_date, expiry_date, status, payment_status, created_at, updated_at
-           ) VALUES (?, ?, ?, 'custom', 0, NOW(), DATE_ADD(NOW(), INTERVAL 1 YEAR), 'active', 'completed', NOW(), NOW())`,
+           ) VALUES (?, ?, ?, 'custom', 0, NOW(), DATE_ADD(NOW(), INTERVAL 1 YEAR), 'Active', 'Paid', NOW(), NOW())`,
           [newMasterId, companyId, primary.plan_id]
         );
 

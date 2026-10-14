@@ -1554,8 +1554,10 @@ const getTopCompanies = async (request, response) => {
 
 const getSuperAdminDashboardData = async (request, response) => {
   try {
-    const { timeFilter } = request.query;
-    const stats = await JobsModel.getSuperAdminDashboardData(timeFilter);
+    const { timeFilter, start_date, end_date, startDate, endDate } = request.query;
+    const sDate = start_date || startDate || null;
+    const eDate = end_date || endDate || null;
+    const stats = await JobsModel.getSuperAdminDashboardData(timeFilter, sDate, eDate);
     response.status(200).send({
       message: "Superadmin dashboard stats fetched successfully",
       data: stats,

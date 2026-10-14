@@ -4,7 +4,7 @@ const SupportTicketController = {
   // Create a new support ticket (public / user)
   createTicket: async (req, res) => {
     try {
-      const { name, email, phone, category, priority, subject, description } = req.body;
+      const { name, email, phone, category, priority, subject, description, user_type } = req.body;
 
       if (!name || !email || !subject || !description) {
         return res.status(400).json({
@@ -32,7 +32,8 @@ const SupportTicketController = {
         priority: priority || 'Medium',
         subject: subject.trim(),
         description: description.trim(),
-        user_id
+        user_id,
+        user_type: user_type || (req.user?.role_id === 3 ? 'recruiter' : (req.user?.role_id === 2 ? 'candidate' : null))
       });
 
       return res.status(201).json({
@@ -58,6 +59,7 @@ const SupportTicketController = {
         status = 'All',
         priority = 'All',
         category = 'All',
+        user_type = 'All',
         page = 1,
         limit = 50,
         email = ''
@@ -68,6 +70,7 @@ const SupportTicketController = {
         status,
         priority,
         category,
+        user_type,
         page: parseInt(page, 10) || 1,
         limit: parseInt(limit, 10) || 50,
         email
@@ -96,7 +99,8 @@ const SupportTicketController = {
   // Get ticket stats summary
   getStats: async (req, res) => {
     try {
-      const stats = await SupportTicketModel.getTicketStats();
+      const { user_type = 'All' } = req.query;
+      const stats = await SupportTicketModel.getTicketStats(user_type);
       return res.status(200).json({
         success: true,
         data: stats

@@ -5,10 +5,12 @@ const pool = require("../config/dbConfig");
 
 const getUsers = async (request, response) => {
   try {
-    const { page, limit, search, status, role, start_date, end_date, startDate, endDate, timeFilter } = request.query;
+    const { page, limit, search, status, role, start_date, end_date, startDate, endDate, timeFilter, sortBy, sortOrder, sort_by, sort_order } = request.query;
     const finalStartDate = start_date || startDate || null;
     const finalEndDate = end_date || endDate || null;
-    const usersData = await userModel.getUsers(page, limit, search, status, role, finalStartDate, finalEndDate, timeFilter);
+    const finalSortBy = sortBy || sort_by || null;
+    const finalSortOrder = sortOrder || sort_order || null;
+    const usersData = await userModel.getUsers(page, limit, search, status, role, finalStartDate, finalEndDate, timeFilter, finalSortBy, finalSortOrder);
     
     response.status(200).json({
       message: "Users data fetched successfully",

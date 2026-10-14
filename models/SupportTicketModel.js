@@ -1,5 +1,15 @@
 const pool = require("../config/dbConfig");
 
+const userTypeExpr = `COALESCE(
+  t.user_type,
+  CASE 
+    WHEN u.role_id = 3 THEN 'recruiter'
+    WHEN u.role_id = 2 THEN 'candidate'
+    WHEN t.category IN ('Recruiter Verification', 'Job Posting', 'Billing & Payment', 'Payment & Billing', 'Employer / Verification', 'Employer Verification') THEN 'recruiter'
+    ELSE 'candidate'
+  END
+)`;
+
 const SupportTicketModel = {
   // Ensure tables exist and seed demo data if empty
   initTable: async () => {
@@ -9,6 +19,7 @@ const SupportTicketModel = {
           id INT AUTO_INCREMENT PRIMARY KEY,
           ticket_number VARCHAR(50) NOT NULL UNIQUE,
           user_id INT NULL,
+          user_type VARCHAR(50) DEFAULT NULL,
           name VARCHAR(255) NOT NULL,
           email VARCHAR(255) NOT NULL,
           phone VARCHAR(50) NULL,
@@ -22,9 +33,17 @@ const SupportTicketModel = {
           INDEX idx_ticket_status (status),
           INDEX idx_ticket_priority (priority),
           INDEX idx_ticket_number (ticket_number),
-          INDEX idx_ticket_email (email)
+          INDEX idx_ticket_email (email),
+          INDEX idx_ticket_user_type (user_type)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
       `);
+
+      // Ensure user_type column exists
+      try {
+        await pool.query(`ALTER TABLE support_tickets ADD COLUMN user_type VARCHAR(50) DEFAULT NULL AFTER user_id`);
+      } catch (colErr) {
+        // column already exists
+      }
 
       await pool.query(`
         CREATE TABLE IF NOT EXISTS ticket_messages (
@@ -44,61 +63,66 @@ const SupportTicketModel = {
         const demoTickets = [
           {
             ticket_number: 'TKT-1009',
-            name: 'Bob Smith',
-            email: 'user9@example.com',
+            name: 'Subaash PM',
+            email: 'subaash@gradlearn.in',
             phone: '+91 9876543219',
             category: 'Technical Issue',
             priority: 'Medium',
             status: 'Closed',
+            user_type: 'recruiter',
             subject: 'Email notifications not working',
             description: 'I am not receiving email notifications whenever new applicant resumes arrive for our posted job.',
             created_at: new Date(Date.now() - 3 * 86400000)
           },
           {
             ticket_number: 'TKT-1006',
-            name: 'Fiona Gallagher',
-            email: 'user6@example.com',
+            name: 'Lakshmi B',
+            email: 'lakshmi.b@ptechnosoft.com',
             phone: '+91 9876543216',
             category: 'Job Posting',
             priority: 'High',
-            status: 'Closed',
-            subject: 'Job posting rejected',
-            description: 'My recent job posting for Senior Full Stack Developer was rejected. Could you please clarify what needs to be changed?',
-            created_at: new Date(Date.now() - 5 * 86400000)
-          },
-          {
-            ticket_number: 'TKT-1013',
-            name: 'Evan Wright',
-            email: 'user13@example.com',
-            phone: '+91 9876543213',
-            category: 'Billing & Payment',
-            priority: 'Low',
             status: 'Open',
-            subject: 'Payment failed for premium plan',
-            description: 'I tried upgrading to the Pro Recruiter monthly plan but the transaction failed at the payment gateway.',
+            user_type: 'recruiter',
+            subject: 'Assistance with Senior Tech Lead job posting review',
+            description: 'My recent job posting for Senior Full Stack Developer was drafted. Could you please clarify what needs to be verified?',
             created_at: new Date(Date.now() - 1 * 86400000)
           },
           {
+            ticket_number: 'TKT-1013',
+            name: 'Demo Testing',
+            email: 'balaji@actetechnologies.com',
+            phone: '+91 9876543213',
+            category: 'Billing & Payment',
+            priority: 'Medium',
+            status: 'In Progress',
+            user_type: 'recruiter',
+            subject: 'Invoice query regarding Enterprise plan renewal',
+            description: 'Could you send the GST-compliant invoice for our quarterly subscription renewal?',
+            created_at: new Date(Date.now() - 2 * 86400000)
+          },
+          {
             ticket_number: 'TKT-1024',
-            name: 'Alice Johnson',
-            email: 'alice@example.com',
+            name: 'Santhosh kathirvel',
+            email: 'actewpdeveloper1@gmail.com',
             phone: '+91 9876543211',
             category: 'Account & Login',
             priority: 'Urgent',
-            status: 'In Progress',
-            subject: 'Cannot access my account',
-            description: 'I am locked out of my corporate recruiter account after updating my work email. Please help immediately.',
+            status: 'Open',
+            user_type: 'candidate',
+            subject: 'Cannot update profile resume file',
+            description: 'I am experiencing an issue while uploading my new PDF resume on candidate dashboard.',
             created_at: new Date(Date.now() - 2 * 3600000)
           },
           {
             ticket_number: 'TKT-1025',
-            name: 'Diana Prince',
-            email: 'diana@example.com',
+            name: 'Santhosh kathirvel',
+            email: 'actewpdeveloper1@gmail.com',
             phone: '+91 9876543214',
             category: 'Feature Request',
             priority: 'Medium',
-            status: 'Open',
-            subject: 'Requesting Dark Mode on candidate search page',
+            status: 'Closed',
+            user_type: 'candidate',
+            subject: 'Requesting Dark Mode on candidate job search',
             description: 'It would be great to have dark mode supported across the Candidate Search dashboard for easier night screening.',
             created_at: new Date(Date.now() - 4 * 3600000)
           }
@@ -107,9 +131,9 @@ const SupportTicketModel = {
         for (const t of demoTickets) {
           const [res] = await pool.query(`
             INSERT INTO support_tickets 
-            (ticket_number, name, email, phone, category, priority, status, subject, description, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `, [t.ticket_number, t.name, t.email, t.phone, t.category, t.priority, t.status, t.subject, t.description, t.created_at]);
+            (ticket_number, user_type, name, email, phone, category, priority, status, subject, description, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [t.ticket_number, t.user_type, t.name, t.email, t.phone, t.category, t.priority, t.status, t.subject, t.description, t.created_at]);
 
           // Seed default messages
           await pool.query(`
@@ -132,7 +156,7 @@ const SupportTicketModel = {
   },
 
   // Create new ticket
-  createTicket: async ({ name, email, phone, category, priority, subject, description, user_id }) => {
+  createTicket: async ({ name, email, phone, category, priority, subject, description, user_id, user_type }) => {
     try {
       // Find next sequential ticket number
       const [lastRow] = await pool.query(`
@@ -149,13 +173,35 @@ const SupportTicketModel = {
       }
       const ticket_number = `TKT-${nextNum}`;
 
+      // Resolve user_type dynamically if not provided
+      let resolvedType = user_type;
+      if (!resolvedType) {
+        if (user_id) {
+          const [uRows] = await pool.query(`SELECT role_id FROM users WHERE id = ?`, [user_id]);
+          if (uRows.length > 0) {
+            resolvedType = uRows[0].role_id === 3 ? 'recruiter' : 'candidate';
+          }
+        }
+        if (!resolvedType && email) {
+          const [uRows] = await pool.query(`SELECT role_id FROM users WHERE email = ?`, [email]);
+          if (uRows.length > 0) {
+            resolvedType = uRows[0].role_id === 3 ? 'recruiter' : 'candidate';
+          }
+        }
+        if (!resolvedType) {
+          const recruiterCats = ['Recruiter Verification', 'Job Posting', 'Billing & Payment', 'Payment & Billing', 'Employer / Verification', 'Employer Verification'];
+          resolvedType = recruiterCats.includes(category) ? 'recruiter' : 'candidate';
+        }
+      }
+
       const [res] = await pool.query(`
         INSERT INTO support_tickets 
-        (ticket_number, user_id, name, email, phone, category, priority, status, subject, description)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'Open', ?, ?)
+        (ticket_number, user_id, user_type, name, email, phone, category, priority, status, subject, description)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Open', ?, ?)
       `, [
         ticket_number,
         user_id || null,
+        resolvedType,
         name || 'Anonymous User',
         email,
         phone || null,
@@ -177,6 +223,7 @@ const SupportTicketModel = {
         id: ticket_number,
         ticket_id: ticketId,
         ticket_number,
+        user_type: resolvedType,
         name,
         email,
         phone,
@@ -193,15 +240,15 @@ const SupportTicketModel = {
   },
 
   // Get all tickets with pagination and filtering
-  getAllTickets: async ({ search = '', status = 'All', priority = 'All', category = 'All', page = 1, limit = 50, email = '' } = {}) => {
+  getAllTickets: async ({ search = '', status = 'All', priority = 'All', category = 'All', user_type = 'All', page = 1, limit = 50, email = '' } = {}) => {
     try {
       let conditions = [];
       let params = [];
 
       if (search) {
-        conditions.push(`(t.ticket_number LIKE ? OR t.subject LIKE ? OR t.name LIKE ? OR t.email LIKE ?)`);
+        conditions.push(`(t.ticket_number LIKE ? OR t.subject LIKE ? OR t.name LIKE ? OR t.email LIKE ? OR u.organization LIKE ?)`);
         const searchWildcard = `%${search}%`;
-        params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard);
+        params.push(searchWildcard, searchWildcard, searchWildcard, searchWildcard, searchWildcard);
       }
 
       if (status && status !== 'All') {
@@ -219,6 +266,11 @@ const SupportTicketModel = {
         params.push(category);
       }
 
+      if (user_type && user_type !== 'All') {
+        conditions.push(`${userTypeExpr} = ?`);
+        params.push(user_type.toLowerCase());
+      }
+
       if (email) {
         conditions.push(`t.email = ?`);
         params.push(email);
@@ -228,7 +280,10 @@ const SupportTicketModel = {
 
       // Count query
       const [countResult] = await pool.query(
-        `SELECT COUNT(*) as total FROM support_tickets t ${whereClause}`,
+        `SELECT COUNT(*) as total 
+         FROM support_tickets t 
+         LEFT JOIN users u ON (t.user_id = u.id OR (t.user_id IS NULL AND t.email = u.email))
+         ${whereClause}`,
         params
       );
       const total = countResult[0].total;
@@ -238,8 +293,13 @@ const SupportTicketModel = {
       const [rows] = await pool.query(`
         SELECT 
           t.*,
+          ${userTypeExpr} AS computed_user_type,
+          u.role_id,
+          u.organization,
+          u.profile_image,
           (SELECT COUNT(*) FROM ticket_messages m WHERE m.ticket_id = t.id) as message_count
         FROM support_tickets t
+        LEFT JOIN users u ON (t.user_id = u.id OR (t.user_id IS NULL AND t.email = u.email))
         ${whereClause}
         ORDER BY t.created_at DESC
         LIMIT ? OFFSET ?
@@ -261,11 +321,14 @@ const SupportTicketModel = {
           ticket_number: row.ticket_number,
           subject: row.subject,
           category: row.category,
+          user_type: row.computed_user_type || row.user_type || 'candidate',
           user: {
             name: row.name,
             email: row.email,
             phone: row.phone,
-            avatar: null
+            avatar: row.profile_image || null,
+            role_id: row.role_id,
+            organization: row.organization || null
           },
           status: row.status,
           priority: row.priority,
@@ -300,7 +363,16 @@ const SupportTicketModel = {
       const condition = isNum ? `t.id = ?` : `t.ticket_number = ?`;
 
       const [rows] = await pool.query(`
-        SELECT t.* FROM support_tickets t WHERE ${condition} LIMIT 1
+        SELECT 
+          t.*,
+          ${userTypeExpr} AS computed_user_type,
+          u.role_id,
+          u.organization,
+          u.profile_image
+        FROM support_tickets t 
+        LEFT JOIN users u ON (t.user_id = u.id OR (t.user_id IS NULL AND t.email = u.email))
+        WHERE ${condition} 
+        LIMIT 1
       `, [idOrNumber]);
 
       if (rows.length === 0) return null;
@@ -320,11 +392,14 @@ const SupportTicketModel = {
         ticket_number: row.ticket_number,
         subject: row.subject,
         category: row.category,
+        user_type: row.computed_user_type || row.user_type || 'candidate',
         user: {
           name: row.name,
           email: row.email,
           phone: row.phone,
-          avatar: null
+          avatar: row.profile_image || null,
+          role_id: row.role_id,
+          organization: row.organization || null
         },
         status: row.status,
         priority: row.priority,
@@ -411,23 +486,67 @@ const SupportTicketModel = {
   },
 
   // Get ticket stats
-  getTicketStats: async () => {
+  getTicketStats: async (user_type = 'All') => {
     try {
       const [rows] = await pool.query(`
         SELECT 
           COUNT(*) as total,
-          SUM(CASE WHEN status = 'Open' THEN 1 ELSE 0 END) as \`open\`,
-          SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END) as inprogress,
-          SUM(CASE WHEN status = 'Closed' THEN 1 ELSE 0 END) as \`closed\`
-        FROM support_tickets
+          SUM(CASE WHEN t.status = 'Open' THEN 1 ELSE 0 END) as \`open\`,
+          SUM(CASE WHEN t.status = 'In Progress' THEN 1 ELSE 0 END) as inprogress,
+          SUM(CASE WHEN t.status = 'Closed' THEN 1 ELSE 0 END) as \`closed\`,
+
+          SUM(CASE WHEN ${userTypeExpr} = 'recruiter' THEN 1 ELSE 0 END) as recruiter_total,
+          SUM(CASE WHEN ${userTypeExpr} = 'recruiter' AND t.status = 'Open' THEN 1 ELSE 0 END) as recruiter_open,
+          SUM(CASE WHEN ${userTypeExpr} = 'recruiter' AND t.status = 'In Progress' THEN 1 ELSE 0 END) as recruiter_inprogress,
+          SUM(CASE WHEN ${userTypeExpr} = 'recruiter' AND t.status = 'Closed' THEN 1 ELSE 0 END) as recruiter_closed,
+
+          SUM(CASE WHEN ${userTypeExpr} = 'candidate' THEN 1 ELSE 0 END) as candidate_total,
+          SUM(CASE WHEN ${userTypeExpr} = 'candidate' AND t.status = 'Open' THEN 1 ELSE 0 END) as candidate_open,
+          SUM(CASE WHEN ${userTypeExpr} = 'candidate' AND t.status = 'In Progress' THEN 1 ELSE 0 END) as candidate_inprogress,
+          SUM(CASE WHEN ${userTypeExpr} = 'candidate' AND t.status = 'Closed' THEN 1 ELSE 0 END) as candidate_closed
+        FROM support_tickets t
+        LEFT JOIN users u ON (t.user_id = u.id OR (t.user_id IS NULL AND t.email = u.email))
       `);
 
-      return {
-        total: rows[0].total || 0,
-        open: rows[0].open || 0,
-        inprogress: rows[0].inprogress || 0,
-        closed: rows[0].closed || 0
+      const r = rows[0] || {};
+      const fullStats = {
+        total: Number(r.total) || 0,
+        open: Number(r.open) || 0,
+        inprogress: Number(r.inprogress) || 0,
+        closed: Number(r.closed) || 0,
+        recruiter: {
+          total: Number(r.recruiter_total) || 0,
+          open: Number(r.recruiter_open) || 0,
+          inprogress: Number(r.recruiter_inprogress) || 0,
+          closed: Number(r.recruiter_closed) || 0
+        },
+        candidate: {
+          total: Number(r.candidate_total) || 0,
+          open: Number(r.candidate_open) || 0,
+          inprogress: Number(r.candidate_inprogress) || 0,
+          closed: Number(r.candidate_closed) || 0
+        }
       };
+
+      if (user_type && user_type.toLowerCase() === 'recruiter') {
+        return {
+          ...fullStats,
+          total: fullStats.recruiter.total,
+          open: fullStats.recruiter.open,
+          inprogress: fullStats.recruiter.inprogress,
+          closed: fullStats.recruiter.closed
+        };
+      } else if (user_type && user_type.toLowerCase() === 'candidate') {
+        return {
+          ...fullStats,
+          total: fullStats.candidate.total,
+          open: fullStats.candidate.open,
+          inprogress: fullStats.candidate.inprogress,
+          closed: fullStats.candidate.closed
+        };
+      }
+
+      return fullStats;
     } catch (error) {
       throw new Error(error.message);
     }
