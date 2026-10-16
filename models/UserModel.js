@@ -355,12 +355,72 @@ const UserModel = {
   },
 
   deleteUser: async (id) => {
+    if (!id) throw new Error("User ID is required for deletion");
+    const connection = await pool.getConnection();
     try {
-      const query = `DELETE FROM users WHERE id = ?`;
-      const [user] = await pool.query(query, [id]);
+      await connection.beginTransaction();
+
+      const safeDelete = async (sql, params) => {
+        try {
+          await connection.query(sql, params);
+        } catch (err) {
+          console.warn(`[deleteUser cleanup notice - ${sql.split(' ')[2]}]:`, err.message);
+        }
+      };
+
+      // 1. Delete support ticket messages linked to this user's tickets
+      await safeDelete(
+        `DELETE FROM ticket_messages WHERE ticket_id IN (SELECT id FROM support_tickets WHERE user_id = ?)`,
+        [id]
+      );
+      await safeDelete(`DELETE FROM support_tickets WHERE user_id = ?`, [id]);
+
+      // 2. Delete job application answers & history
+      await safeDelete(`DELETE FROM applied_job_status_history WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM job_post_answers WHERE userId = ?`, [id]);
+      await safeDelete(`DELETE FROM applied_jobs WHERE userId = ?`, [id]);
+      await safeDelete(`DELETE FROM job_applications WHERE user_id = ?`, [id]);
+
+      // 3. Delete education, experience & professional details
+      await safeDelete(`DELETE FROM user_education WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM user_professional WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM user_projects WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM user_address WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM user_social_links WHERE user_id = ?`, [id]);
+
+      // 4. Delete saved jobs, alerts, usage
+      await safeDelete(`DELETE FROM user_saved_jobs WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM job_alerts WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM user_daily_usage WHERE user_id = ?`, [id]);
+
+      // 5. Delete recruiter / folder associations
+      await safeDelete(`DELETE FROM candidate_folder_items WHERE candidate_id = ?`, [id]);
+      await safeDelete(`DELETE FROM hr_saved_candidates WHERE candidate_id = ?`, [id]);
+      await safeDelete(`DELETE FROM recruiter_resume_access WHERE candidate_id = ?`, [id]);
+
+      // 6. Delete event & workshop registrations
+      await safeDelete(`DELETE FROM event_registrations WHERE userId = ?`, [id]);
+      await safeDelete(`DELETE FROM workshop_registrations WHERE userId = ?`, [id]);
+
+      // 7. Delete admin permissions & messages
+      await safeDelete(`DELETE FROM admin_permissions WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM messages WHERE sender_id = ? OR receiver_id = ?`, [id, id]);
+      await safeDelete(`DELETE FROM activity_logs WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM notifications WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM carts WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM recordings WHERE user_id = ?`, [id]);
+      await safeDelete(`DELETE FROM assign_manager WHERE user_id = ? OR manager_id = ?`, [id, id]);
+
+      // 8. Finally delete the user account and login credentials
+      const [user] = await connection.query(`DELETE FROM users WHERE id = ?`, [id]);
+
+      await connection.commit();
       return user.affectedRows;
     } catch (error) {
+      await connection.rollback();
       throw new Error(error.message);
+    } finally {
+      connection.release();
     }
   },
 

@@ -128,6 +128,7 @@ router.post("/createUser", userController.createUser);
 router.put("/updateUser/:id", userController.updateUser);
 router.put("/user/status/:id", verifyToken, userController.updateUserStatus);
 router.delete("/deleteUser/:id", userController.deleteUser);
+router.post("/deleteUser/:id", userController.deleteUser);
 
 // Role module APIs
 router.get("/getRoles", RoleController.getRoles);
