@@ -310,6 +310,10 @@ ALTER TABLE `users`
   ADD COLUMN `visibility_mode` VARCHAR(20) DEFAULT 'Limited',
   ADD COLUMN `hidden_companies` LONGTEXT NULL,
   ADD COLUMN `allow_contact` TINYINT(1) DEFAULT 1,
-  ADD COLUMN `show_in_search` TINYINT(1) DEFAULT 1;
+  ADD COLUMN `show_in_search` TINYINT(1) DEFAULT 1,
+  ADD COLUMN `last_login` DATETIME NULL DEFAULT NULL;
+
+-- 4. Table: users (index for last_login performance)
+ALTER TABLE `users` ADD INDEX `idx_users_last_login` (`last_login`);
 
 SET FOREIGN_KEY_CHECKS = 1;

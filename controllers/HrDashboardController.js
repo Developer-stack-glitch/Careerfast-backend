@@ -511,41 +511,84 @@ const HrDashboardController = {
       const totalDownloads = folders.reduce((sum, f) => sum + (f.candidate_count || 0), 0);
       const totalResumes = enrichedCandidates.filter(c => c.has_resume).length;
 
-      // 5. Credits breakdown
+      // 5. Credits breakdown - Dynamic calculation from subscription & usage
       let [creditRows] = await pool.query(
         `SELECT * FROM hr_credits_breakdown WHERE recruiter_id = ? LIMIT 1`,
         [recruiterId]
       );
+      const customCredits = creditRows[0] || {};
 
-      let creditsData = creditRows[0];
-      if (!creditsData) {
-        creditsData = {
-          profile_usage_used: 45300,
-          profile_usage_total: 720000,
-          profile_views: 1300,
-          excel_downloads: subData?.excel_downloads_used !== undefined ? subData.excel_downloads_used : totalDownloads,
-          job_posting_used: subData.job_posts_used,
-          job_posting_total: subData.job_post_limit,
-          jobs_posted: totalJobs,
-          outreach_used: 1400000,
-          outreach_total: 10800000,
-          email_count: 0,
-          whatsapp_count: 0,
-          sms_count: 0,
-          email_limit: subData.email_limit || 50,
-          whatsapp_limit: subData.whatsapp_limit || 50,
-          excel_download_limit: subData.excel_download_limit || 50
-        };
-      } else {
-        // Sync real-time dynamic jobs posted, limits & downloads counts
-        creditsData.jobs_posted = totalJobs;
-        creditsData.excel_downloads = subData?.excel_downloads_used !== undefined ? subData.excel_downloads_used : totalDownloads;
-        creditsData.job_posting_used = subData.job_posts_used;
-        creditsData.job_posting_total = subData.job_post_limit;
-        creditsData.email_limit = subData.email_limit || 50;
-        creditsData.whatsapp_limit = subData.whatsapp_limit || 50;
-        creditsData.excel_download_limit = subData.excel_download_limit || 50;
-      }
+      const profileViews = customCredits.profile_views !== undefined && customCredits.profile_views !== 1300
+        ? Number(customCredits.profile_views)
+        : Number(subData?.resume_views_used || 0);
+
+      const profileViewsLimit = customCredits.profile_usage_total !== undefined && customCredits.profile_usage_total !== 720000
+        ? Number(customCredits.profile_usage_total)
+        : Number(subData?.resume_view_limit || 1000);
+
+      const resumeDownloads = Number(subData?.resume_downloads_used || 0);
+      const resumeDownloadsLimit = Number(subData?.resume_download_limit || 0);
+
+      const profileUsageUsed = customCredits.profile_usage_used !== undefined && customCredits.profile_usage_used !== 45300
+        ? Number(customCredits.profile_usage_used)
+        : profileViews;
+
+      const profileUsageTotal = profileViewsLimit;
+
+      const excelDownloads = customCredits.excel_downloads !== undefined
+        ? Number(customCredits.excel_downloads)
+        : Number(subData?.excel_downloads_used !== undefined ? subData.excel_downloads_used : totalDownloads);
+
+      const excelDownloadLimit = Number(subData?.excel_download_limit !== undefined ? subData.excel_download_limit : 50);
+
+      const jobPostingUsed = Number(subData?.job_posts_used !== undefined ? subData.job_posts_used : (totalJobs || 0));
+      const jobPostingTotal = Number(subData?.job_post_limit !== undefined ? subData.job_post_limit : 5);
+      const activeJobLimit = Number(subData?.active_job_limit !== undefined ? subData.active_job_limit : 3);
+
+      const emailCount = customCredits.email_count !== undefined && customCredits.email_count > 0
+        ? Number(customCredits.email_count)
+        : Number(subData?.emails_sent || 0);
+      const emailLimit = Number(subData?.email_limit !== undefined ? subData.email_limit : 50);
+
+      const whatsappCount = customCredits.whatsapp_count !== undefined && customCredits.whatsapp_count > 0
+        ? Number(customCredits.whatsapp_count)
+        : Number(subData?.whatsapp_messages_sent || 0);
+      const whatsappLimit = Number(subData?.whatsapp_limit !== undefined ? subData.whatsapp_limit : 50);
+
+      const smsCount = Number(customCredits.sms_count || 0);
+      const smsLimit = Number(customCredits.sms_limit || 0);
+
+      const outreachUsed = customCredits.outreach_used !== undefined && customCredits.outreach_used !== 1400000
+        ? Number(customCredits.outreach_used)
+        : (emailCount + whatsappCount + smsCount);
+
+      const outreachTotal = customCredits.outreach_total !== undefined && customCredits.outreach_total !== 10800000
+        ? Number(customCredits.outreach_total)
+        : (emailLimit + whatsappLimit + smsLimit || 100);
+
+      const creditsData = {
+        profile_usage_used: profileUsageUsed,
+        profile_usage_total: profileUsageTotal,
+        profile_views: profileViews,
+        resume_downloads: resumeDownloads,
+        resume_download_limit: resumeDownloadsLimit,
+        excel_downloads: excelDownloads,
+        excel_download_limit: excelDownloadLimit,
+        job_posting_used: jobPostingUsed,
+        job_posting_total: jobPostingTotal,
+        jobs_posted: totalJobs || 0,
+        active_jobs: activeJobs,
+        active_job_limit: activeJobLimit,
+        pending_jobs: pendingJobs,
+        outreach_used: outreachUsed,
+        outreach_total: outreachTotal,
+        email_count: emailCount,
+        email_limit: emailLimit,
+        whatsapp_count: whatsappCount,
+        whatsapp_limit: whatsappLimit,
+        sms_count: smsCount,
+        sms_limit: smsLimit
+      };
 
       return res.status(200).json({
         success: true,
@@ -684,11 +727,112 @@ const HrDashboardController = {
   getCredits: async (req, res) => {
     try {
       const recruiterId = req.user?.id || parseInt(req.query.recruiter_id, 10) || 2;
-      const [rows] = await pool.query(
+      
+      const [subRows] = await pool.query(
+        `SELECT rs.*, sp.name AS plan_name, sp.job_post_limit, sp.active_job_limit, sp.resume_view_limit, sp.resume_download_limit,
+                COALESCE(sp.email_limit, 50) AS email_limit,
+                COALESCE(sp.whatsapp_limit, 50) AS whatsapp_limit,
+                COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
+                COALESCE(su.job_posts_used, 0) AS job_posts_used,
+                COALESCE(su.resume_views_used, 0) AS resume_views_used,
+                COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
+                COALESCE(su.emails_sent, 0) AS emails_sent,
+                COALESCE(su.whatsapp_messages_sent, 0) AS whatsapp_messages_sent,
+                COALESCE(su.excel_downloads_used, 0) AS excel_downloads_used
+         FROM recruiter_subscriptions rs
+         INNER JOIN subscription_plans sp ON rs.plan_id = sp.id
+         LEFT JOIN subscription_usage su ON rs.id = su.subscription_id
+         WHERE rs.recruiter_id = ?
+         ORDER BY rs.id DESC LIMIT 1`,
+        [recruiterId]
+      );
+      const sub = subRows[0] || {};
+
+      const [counts] = await pool.query(
+        `SELECT 
+           COUNT(*) AS total_jobs,
+           SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved' THEN 1 ELSE 0 END) AS active_jobs,
+           SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) AS pending_jobs
+         FROM job_post WHERE user_id = ?`,
+        [recruiterId]
+      );
+      const totalJobs = Number(counts[0]?.total_jobs || 0);
+      const activeJobs = Number(counts[0]?.active_jobs || 0);
+      const pendingJobs = Number(counts[0]?.pending_jobs || 0);
+
+      const [creditRows] = await pool.query(
         `SELECT * FROM hr_credits_breakdown WHERE recruiter_id = ? LIMIT 1`,
         [recruiterId]
       );
-      return res.status(200).json({ success: true, data: rows[0] || null });
+      const customCredits = creditRows[0] || {};
+
+      const profileViews = customCredits.profile_views !== undefined && customCredits.profile_views !== 1300
+        ? Number(customCredits.profile_views)
+        : Number(sub.resume_views_used || 0);
+
+      const profileViewsLimit = customCredits.profile_usage_total !== undefined && customCredits.profile_usage_total !== 720000
+        ? Number(customCredits.profile_usage_total)
+        : Number(sub.resume_view_limit || 1000);
+
+      const profileUsageUsed = customCredits.profile_usage_used !== undefined && customCredits.profile_usage_used !== 45300
+        ? Number(customCredits.profile_usage_used)
+        : profileViews;
+
+      const profileUsageTotal = profileViewsLimit;
+
+      const excelDownloads = customCredits.excel_downloads !== undefined
+        ? Number(customCredits.excel_downloads)
+        : Number(sub.excel_downloads_used || 0);
+      const excelDownloadLimit = Number(sub.excel_download_limit || 50);
+
+      const jobPostingUsed = Number(sub.job_posts_used !== undefined ? sub.job_posts_used : totalJobs);
+      const jobPostingTotal = Number(sub.job_post_limit !== undefined ? sub.job_post_limit : 5);
+      const activeJobLimit = Number(sub.active_job_limit !== undefined ? sub.active_job_limit : 3);
+
+      const emailCount = customCredits.email_count !== undefined && customCredits.email_count > 0
+        ? Number(customCredits.email_count)
+        : Number(sub.emails_sent || 0);
+      const emailLimit = Number(sub.email_limit !== undefined ? sub.email_limit : 50);
+
+      const whatsappCount = customCredits.whatsapp_count !== undefined && customCredits.whatsapp_count > 0
+        ? Number(customCredits.whatsapp_count)
+        : Number(sub.whatsapp_messages_sent || 0);
+      const whatsappLimit = Number(sub.whatsapp_limit !== undefined ? sub.whatsapp_limit : 50);
+
+      const smsCount = Number(customCredits.sms_count || 0);
+      const smsLimit = Number(customCredits.sms_limit || 0);
+
+      const outreachUsed = customCredits.outreach_used !== undefined && customCredits.outreach_used !== 1400000
+        ? Number(customCredits.outreach_used)
+        : (emailCount + whatsappCount + smsCount);
+      const outreachTotal = customCredits.outreach_total !== undefined && customCredits.outreach_total !== 10800000
+        ? Number(customCredits.outreach_total)
+        : (emailLimit + whatsappLimit + smsLimit || 100);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          profile_usage_used: profileUsageUsed,
+          profile_usage_total: profileUsageTotal,
+          profile_views: profileViews,
+          excel_downloads: excelDownloads,
+          excel_download_limit: excelDownloadLimit,
+          job_posting_used: jobPostingUsed,
+          job_posting_total: jobPostingTotal,
+          jobs_posted: totalJobs,
+          active_jobs: activeJobs,
+          active_job_limit: activeJobLimit,
+          pending_jobs: pendingJobs,
+          outreach_used: outreachUsed,
+          outreach_total: outreachTotal,
+          email_count: emailCount,
+          email_limit: emailLimit,
+          whatsapp_count: whatsappCount,
+          whatsapp_limit: whatsappLimit,
+          sms_count: smsCount,
+          sms_limit: smsLimit
+        }
+      });
     } catch (error) {
       console.error("Error in getCredits:", error);
       return res.status(500).json({ success: false, message: error.message });

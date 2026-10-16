@@ -606,7 +606,7 @@ const JobsModel = {
           await pool.query(query, [insertValues]);
         }
       }
-      return result.affectedRows;
+      return { affectedRows: result.affectedRows, id: result.insertId, alreadyApplied: false };
     } catch (error) {
       throw new Error(error.message);
     }
@@ -1279,12 +1279,28 @@ const JobsModel = {
 
       // Workplace location filter
       if (filters.work_location) {
-        let workLocations = Array.isArray(filters.work_location)
+        let rawLocations = Array.isArray(filters.work_location)
           ? filters.work_location
           : [filters.work_location];
 
-        // Filter out any empty/null values
-        workLocations = workLocations.filter(loc => loc && String(loc).trim() !== "");
+        // Filter out any empty/null values and expand aliases (e.g. "Bangalore / Bengaluru")
+        const expandedTerms = new Set();
+        rawLocations.forEach((loc) => {
+          if (!loc || typeof loc !== "string") return;
+          const trimmed = loc.trim();
+          if (!trimmed) return;
+          expandedTerms.add(trimmed.toLowerCase());
+          const cleaned = trimmed.replace(/\([^)]*\)/g, "").trim();
+          if (cleaned && cleaned.length >= 2) expandedTerms.add(cleaned.toLowerCase());
+          if (trimmed.includes("/")) {
+            trimmed.split("/").forEach((part) => {
+              const p = part.trim().toLowerCase();
+              if (p && p.length >= 2) expandedTerms.add(p);
+            });
+          }
+        });
+
+        const workLocations = Array.from(expandedTerms);
 
         if (workLocations.length > 0) {
           whereClauses.push(`(
@@ -1294,8 +1310,7 @@ const JobsModel = {
           )`);
 
           workLocations.forEach((loc) => {
-            const l = loc.toLowerCase();
-            queryParams.push(l, `%${l}%`);
+            queryParams.push(loc, `%${loc}%`);
           });
         }
       }
@@ -3043,7 +3058,31 @@ const JobsModel = {
             } catch (err) {}
           });
 
-          suggestions.locations = Array.from(locMap.values()).slice(0, 8);
+          // Also pull from worldwide locations API if user typed a query
+          if (cleanQ.length >= 2) {
+            try {
+              const LocationController = require('../controllers/LocationController');
+              const geoLocs = await LocationController.fetchLocationsInternal(cleanQ);
+              if (Array.isArray(geoLocs)) {
+                geoLocs.forEach(item => {
+                  const name = item.city || item.mainText || item.label;
+                  if (name && !locMap.has(name.toLowerCase())) {
+                    locMap.set(name.toLowerCase(), {
+                      label: item.mainText || item.label,
+                      subText: item.subText || item.state || item.country || '',
+                      fullLabel: item.label,
+                      city: item.city || item.mainText,
+                      type: "location"
+                    });
+                  }
+                });
+              }
+            } catch (geoErr) {
+              console.warn("Error fetching geocoded locations in suggestions:", geoErr.message);
+            }
+          }
+
+          suggestions.locations = Array.from(locMap.values()).slice(0, 10);
         } catch (e) {
           console.error("Error fetching locations for suggestion:", e);
         }
@@ -3105,7 +3144,18 @@ const JobsModel = {
           WHERE role_id = 2 
           ORDER BY COALESCE(last_login, created_date) DESC
           LIMIT 10
-        `),
+        `).catch(async (err) => {
+          if (err && (err.code === 'ER_BAD_FIELD_ERROR' || err.errno === 1054)) {
+            return pool.query(`
+              SELECT id, first_name, last_name, email, phone, location, created_date, is_active, profile_image, created_date AS last_login 
+              FROM users 
+              WHERE role_id = 2 
+              ORDER BY created_date DESC
+              LIMIT 10
+            `);
+          }
+          throw err;
+        }),
         pool.query(`
           SELECT u.id, u.first_name, u.last_name, u.email, u.phone, u.organization, u.location, u.created_date, u.is_active, u.profile_image,
                  (SELECT COUNT(*) FROM job_post jp WHERE jp.user_id = u.id) AS jobs_count

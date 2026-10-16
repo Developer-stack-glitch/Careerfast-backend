@@ -19,6 +19,7 @@ const SubscriptionPlanController = require("../controllers/SubscriptionPlanContr
 const RecruiterManagementController = require("../controllers/RecruiterManagementController");
 const RecruiterSubscriptionController = require("../controllers/RecruiterSubscriptionController");
 const SubRecruiterController = require("../controllers/SubRecruiterController");
+const LocationController = require("../controllers/LocationController");
 const authRoutes = require("./auth");
 const tokenRoutes = require("./tokenRoutes");
 const eventRoutes = require("./eventRoutes");
@@ -180,6 +181,10 @@ router.get(
   verifyToken,
   JobsController.getWorklocation
 );
+
+// Worldwide Location Search / Autocomplete API
+router.get("/location/search", LocationController.searchLocations);
+router.get("/locations/search", LocationController.searchLocations);
 
 router.get(
   "/job/durationTypes/get",

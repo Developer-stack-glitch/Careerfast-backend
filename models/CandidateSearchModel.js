@@ -422,7 +422,7 @@ const CandidateSearchModel = {
       }
 
       // Pagination
-      const parsedLimit = parseInt(limit, 10) || 10;
+      const parsedLimit = parseInt(limit, 10) || 40;
       const parsedPage = parseInt(page, 10) || 1;
       const offset = (parsedPage - 1) * parsedLimit;
 
@@ -629,10 +629,12 @@ const CandidateSearchModel = {
           else primaryStage = candFolders[0].stage || 'prospect';
         }
 
+        const isCandidateFresher = (user.experince_type && String(user.experince_type).toLowerCase() === 'fresher') || experienceDisplay === 'Fresher';
+
         return {
           ...user,
           skills: Array.isArray(parsedSkills) ? parsedSkills : [],
-          current_job_title: currentProf ? (currentProf.job_title || currentProf.designation) : null,
+          current_job_title: currentProf ? (currentProf.job_title || currentProf.designation) : (isCandidateFresher ? 'Fresher' : null),
           current_company: currentProf ? currentProf.company_name : null,
           designation: currentProf ? currentProf.designation : null,
           past_job_title: pastJobTitle,
@@ -1472,7 +1474,7 @@ const CandidateSearchModel = {
             stage: rawStage,
             skills: typeof c.skills === 'string' ? (() => { try { return JSON.parse(c.skills); } catch (_) { return c.skills.split(',').map(s => s.trim()); } })() : (c.skills || []),
             name: `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Candidate',
-            current_job_title: c.job_title || c.designation || null,
+            current_job_title: c.job_title || c.designation || (((c.experince_type && String(c.experince_type).toLowerCase() === 'fresher') || c.total_years === '0 Years' || c.total_years === '0') ? 'Fresher' : null),
             current_company: c.company_name || null,
             preferred_locations: prefLocations,
             notice_period: prefData.noticePeriod || prefData.notice_period || null,

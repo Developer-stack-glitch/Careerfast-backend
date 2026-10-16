@@ -166,7 +166,7 @@ const sendApplicationStatusEmail = async (candidateEmail, candidateName, jobTitl
               <p>We are pleased to inform you that you have been <strong>shortlisted</strong> for the position of <strong>${jobTitle}</strong> at <strong>${companyName}</strong>.</p>
               <p>Your profile has impressed our recruitment team, and we would like to move forward with the next steps in the hiring process.</p>
               <p>Please check your CareerFast dashboard for further details and next steps.</p>
-              <a href="https://careerfast.in/admin-profile/applied" class="button">View Application Status</a>
+              <a href="https://careerfast.in/candidate-profile/applied" class="button">View Application Status</a>
               <p style="margin-top: 30px;">Best regards,<br><strong>${companyName}</strong></p>
             </div>
             <div class="footer">
@@ -235,7 +235,7 @@ const sendApplicationStatusEmail = async (candidateEmail, candidateName, jobTitl
               <p>Dear ${candidateName},</p>
               <p>We wanted to reach out regarding your application for the <strong>${jobTitle}</strong> position at <strong>${companyName}</strong>.</p>
               <p>We have reviewed your application and would like to provide you with an update. Please check your CareerFast dashboard for detailed information.</p>
-              <a href="https://careerfast.in/admin-profile/applied" class="button">Check Your Dashboard</a>
+              <a href="https://careerfast.in/candidate-profile/applied" class="button">Check Your Dashboard</a>
               <p style="margin-top: 30px;">Thank you for your patience.<br><strong>${companyName}</strong></p>
             </div>
             <div class="footer">
@@ -1161,11 +1161,496 @@ const sendRecruiterWelcomeEmail = async ({
   }
 };
 
+/**
+ * Send polished application confirmation email to candidate with rich neat UI
+ * @param {Object} params
+ * @param {string} params.candidateEmail - Recipient email
+ * @param {string} [params.candidateName] - Candidate full name
+ * @param {string} [params.jobTitle] - Job title
+ * @param {string} [params.companyName] - Company name
+ * @param {string} [params.companyLogo] - Company logo URL or path
+ * @param {string} [params.jobNature] - Job nature (e.g. Full Time, Internship)
+ * @param {string} [params.workplaceType] - Workplace type (e.g. Remote, Hybrid, On-site)
+ * @param {string} [params.workLocation] - Formatted location
+ * @param {string} [params.salaryText] - Formatted compensation / stipend
+ * @param {string} [params.experienceRequired] - Experience required
+ * @param {string} [params.appliedDate] - Formatted application date
+ * @param {string} [params.applicationRef] - Application tracking reference
+ * @param {Array<{question: string, answer: string}>} [params.screeningAnswers] - Pre-screening questions/answers
+ * @param {number|string} [params.jobId] - Job post ID
+ */
+const sendApplicationConfirmationEmail = async ({
+  candidateEmail,
+  candidateName = "Candidate",
+  jobTitle = "Job Application",
+  companyName = "CareerFast Partner",
+  companyLogo = null,
+  jobNature = "Job",
+  workplaceType = "In Office",
+  workLocation = "Not Specified",
+  salaryText = "Competitive",
+  experienceRequired = "Not Specified",
+  appliedDate = null,
+  applicationRef = null,
+  screeningAnswers = [],
+  jobId = null,
+}) => {
+  if (!candidateEmail) {
+    console.warn("[EmailModel] sendApplicationConfirmationEmail skipped: candidateEmail is missing.");
+    return { success: false, error: "Missing candidateEmail" };
+  }
+
+  try {
+    const isProduction = process.env.NODE_ENV === "production";
+    const frontendUrl = process.env.FRONTEND_URL || (isProduction ? "https://careerfast.in" : "http://localhost:3000");
+    const currentYear = new Date().getFullYear();
+    const dashboardUrl = `${frontendUrl}/candidate-profile/applied`;
+    const jobPortalUrl = `${frontendUrl}/job-portal`;
+
+    // Check for local logo file to attach as CID
+    const primaryLogoPath = path.resolve(__dirname, "../assets/careerfastlogofinal.png");
+    const fallbackLogoPath = path.resolve(__dirname, "../../careerfast-frontend/src/images/careerfastlogofinal.png");
+    const hrLogoPath = path.resolve(__dirname, "../../careerfastHR/src/images/careerfastlogofinal.png");
+
+    let logoAttachment = null;
+    let logoSrc = "https://careerfast.in/_next/static/media/careerfastlogofinal.0nplzw.k4hsr8.png";
+
+    if (fs.existsSync(primaryLogoPath)) {
+      logoAttachment = {
+        filename: "careerfast-logo.png",
+        path: primaryLogoPath,
+        cid: "careerfastlogo",
+        contentType: "image/png",
+        contentDisposition: "inline",
+      };
+      logoSrc = "cid:careerfastlogo";
+    } else if (fs.existsSync(fallbackLogoPath)) {
+      logoAttachment = {
+        filename: "careerfast-logo.png",
+        path: fallbackLogoPath,
+        cid: "careerfastlogo",
+        contentType: "image/png",
+        contentDisposition: "inline",
+      };
+      logoSrc = "cid:careerfastlogo";
+    } else if (fs.existsSync(hrLogoPath)) {
+      logoAttachment = {
+        filename: "careerfast-logo.png",
+        path: hrLogoPath,
+        cid: "careerfastlogo",
+        contentType: "image/png",
+        contentDisposition: "inline",
+      };
+      logoSrc = "cid:careerfastlogo";
+    }
+
+    const cleanJobTitle = (jobTitle || "Job Opportunity").trim();
+    const cleanCompanyName = (companyName || "CareerFast Partner").trim();
+    const subject = `Application Confirmed: ${cleanJobTitle} at ${cleanCompanyName}`;
+
+    const formattedDate = appliedDate || new Intl.DateTimeFormat("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata",
+    }).format(new Date());
+
+    const refCode = applicationRef || (jobId ? `CF-APP-${jobId}` : `CF-APP-${Date.now().toString(36).toUpperCase()}`);
+
+    const escapeHtml = (str) => {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    };
+
+    const companyInitials = (cleanCompanyName || "CF")
+      .split(" ")
+      .filter(Boolean)
+      .map(w => w[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "CF";
+
+    // Resolve company logo (support base64 data URIs via inline CID attachment, web URLs, and upload paths)
+    let companyLogoSrc = null;
+    let companyLogoAttachment = null;
+
+    if (companyLogo && typeof companyLogo === "string") {
+      const trimmedLogo = companyLogo.trim();
+      if (trimmedLogo.startsWith("data:image/")) {
+        const match = trimmedLogo.match(/^data:(image\/[a-zA-Z0-9\+\-\.]+);base64,(.+)$/s);
+        if (match) {
+          const mimeType = match[1].toLowerCase();
+          const base64Data = match[2].trim();
+          let ext = "png";
+          if (mimeType.includes("jpeg") || mimeType.includes("jpg")) ext = "jpg";
+          else if (mimeType.includes("gif")) ext = "gif";
+          else if (mimeType.includes("webp")) ext = "webp";
+          else if (mimeType.includes("svg")) ext = "svg";
+
+          try {
+            const buf = Buffer.from(base64Data, "base64");
+            if (buf.length > 0) {
+              companyLogoAttachment = {
+                filename: `company-logo.${ext}`,
+                content: buf,
+                cid: "companylogo",
+                contentType: mimeType,
+                contentDisposition: "inline",
+              };
+              companyLogoSrc = "cid:companylogo";
+            }
+          } catch (e) {
+            console.warn("[EmailModel] Error parsing company logo data URI buffer:", e.message);
+          }
+        }
+      } else if (trimmedLogo.startsWith("http://") || trimmedLogo.startsWith("https://")) {
+        if (!trimmedLogo.includes("dummy")) {
+          companyLogoSrc = trimmedLogo;
+        }
+      } else if (trimmedLogo.startsWith("/uploads/") || trimmedLogo.startsWith("uploads/")) {
+        companyLogoSrc = `https://careerfast.in/${trimmedLogo.replace(/^\/+/, "")}`;
+      } else if (trimmedLogo.length > 50 && (trimmedLogo.startsWith("iVBORw0KGgo") || trimmedLogo.startsWith("/9j/") || trimmedLogo.startsWith("R0lGOD") || trimmedLogo.startsWith("UklGR"))) {
+        let mimeType = "image/png";
+        let ext = "png";
+        if (trimmedLogo.startsWith("/9j/")) { mimeType = "image/jpeg"; ext = "jpg"; }
+        else if (trimmedLogo.startsWith("R0lGOD")) { mimeType = "image/gif"; ext = "gif"; }
+        else if (trimmedLogo.startsWith("UklGR")) { mimeType = "image/webp"; ext = "webp"; }
+        try {
+          const buf = Buffer.from(trimmedLogo, "base64");
+          if (buf.length > 0) {
+            companyLogoAttachment = {
+              filename: `company-logo.${ext}`,
+              content: buf,
+              cid: "companylogo",
+              contentType: mimeType,
+              contentDisposition: "inline",
+            };
+            companyLogoSrc = "cid:companylogo";
+          }
+        } catch (e) {
+          console.warn("[EmailModel] Error parsing raw base64 company logo buffer:", e.message);
+        }
+      }
+    }
+
+    const logoElement = companyLogoSrc ? `
+      <table cellpadding="0" cellspacing="0" border="0" style="width: 52px; height: 52px; min-width: 52px; max-width: 52px; background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);">
+        <tr>
+          <td align="center" valign="middle" style="width: 52px; height: 52px; padding: 4px;">
+            <img src="${companyLogoSrc}" alt="${escapeHtml(cleanCompanyName)}" width="44" height="44" border="0" style="max-width: 44px; max-height: 44px; width: auto; height: auto; object-fit: contain; display: block; margin: 0 auto; border: 0;" />
+          </td>
+        </tr>
+      </table>
+    ` : `
+      <table cellpadding="0" cellspacing="0" border="0" style="width: 52px; height: 52px; min-width: 52px; max-width: 52px; background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <tr>
+          <td align="center" valign="middle" style="width: 52px; height: 52px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 16px; font-weight: 600; color: #4338ca; letter-spacing: 0.5px;">
+            ${escapeHtml(companyInitials)}
+          </td>
+        </tr>
+      </table>
+    `;
+
+    // Workplace formatting
+    let roleType = jobNature === "Job" ? "Full Time" : (jobNature || "Full Time");
+    let wpText = workplaceType || "On-site";
+    if (wpText.toLowerCase() === "in office") wpText = "On-site";
+    const roleAndWorkplace = `${escapeHtml(roleType)} &bull; ${escapeHtml(wpText)}`;
+
+    // Screening responses block if candidate provided answers
+    let screeningSection = "";
+    if (Array.isArray(screeningAnswers) && screeningAnswers.length > 0) {
+      const itemsHtml = screeningAnswers
+        .map(
+          (qa, idx) => `
+          <div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px; margin-bottom: 6px;">
+            <div style="font-size: 12px; font-weight: 500; color: #4b5563; margin-bottom: 2px;">
+              Q${idx + 1}: ${escapeHtml(qa.question || "Screening Question")}
+            </div>
+            <div style="font-size: 13px; color: #111827; font-weight: 500;">
+              ${escapeHtml(qa.answer || "Answer provided")}
+            </div>
+          </div>
+        `
+        )
+        .join("");
+
+      screeningSection = `
+        <div style="margin: 16px 0; padding: 14px 16px; background-color: #fafafa; border-radius: 8px; border: 1px solid #e5e7eb;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 8px;">
+            Screening Responses
+          </div>
+          ${itemsHtml}
+        </div>
+      `;
+    }
+
+    const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(subject)}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #374151; -webkit-font-smoothing: antialiased; line-height: 1.5;">
+
+  <!-- Preheader text -->
+  <div style="display: none; max-height: 0px; overflow: hidden; mso-hide: all; font-size: 1px; line-height: 1px; color: #f8fafc; opacity: 0;">
+    Your application for ${escapeHtml(cleanJobTitle)} at ${escapeHtml(cleanCompanyName)} has been received.
+    &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+  </div>
+
+  <div style="width: 100%; background-color: #f8fafc; padding: 32px 12px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+      <tr>
+        <td align="center">
+          <div style="max-width: 580px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);">
+            
+            <!-- Top Subtle Indigo Accent -->
+            <div style="height: 3px; background-color: #4f46e5;"></div>
+
+            <!-- Header with Logo and Status -->
+            <div style="padding: 20px 28px; background-color: #ffffff; border-bottom: 1px solid #f3f4f6;">
+              <table width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td valign="middle" align="left">
+                    <a href="${frontendUrl}" target="_blank" style="text-decoration: none; display: inline-block;">
+                      <img src="${logoSrc}" alt="CareerFast" width="150" height="32" border="0" style="max-width: 160px; max-height: 34px; width: 150px; height: 32px; display: block; border: 0; object-fit: contain;" />
+                    </a>
+                  </td>
+                  <td valign="middle" align="right">
+                    <div style="display: inline-block; background-color: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; font-size: 11px; font-weight: 500; letter-spacing: 0.3px; padding: 4px 10px; border-radius: 9999px;">
+                      Application Received
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </div>
+
+            <!-- Main Content Area -->
+            <div style="padding: 26px 28px 24px 28px;">
+
+              <!-- Clean Elegant Greeting -->
+              <div style="margin-bottom: 20px;">
+                <h1 style="font-size: 19px; font-weight: 600; color: #111827; margin: 0 0 6px 0; letter-spacing: -0.2px;">
+                  Application Submitted
+                </h1>
+                <p style="font-size: 13.5px; line-height: 1.6; color: #4b5563; margin: 0;">
+                  Hi ${escapeHtml(candidateName)}, thank you for applying. Your application for <span style="color: #111827; font-weight: 500;">${escapeHtml(cleanJobTitle)}</span> has been delivered to the recruitment team at <span style="color: #111827; font-weight: 500;">${escapeHtml(cleanCompanyName)}</span>.
+                </p>
+              </div>
+
+              <!-- Professional Job Summary Card -->
+              <div style="background-color: #fafafa; border: 1px solid #e5e7eb; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px;">
+                
+                <!-- Company & Title Header Row -->
+                <table width="100%" cellspacing="0" cellpadding="0" border="0">
+                  <tr>
+                    <td width="52" valign="middle" align="left">
+                      ${logoElement}
+                    </td>
+                    <td valign="middle" style="padding-left: 12px;">
+                      <div style="font-size: 16px; font-weight: 600; color: #111827; line-height: 1.35; margin-bottom: 2px;">
+                        ${escapeHtml(cleanJobTitle)}
+                      </div>
+                      <div style="font-size: 13px; color: #6b7280; font-weight: 400;">
+                        ${escapeHtml(cleanCompanyName)}
+                        <span style="display: inline-block; background-color: #eff6ff; color: #2563eb; font-size: 10px; font-weight: 500; padding: 1px 6px; border-radius: 4px; margin-left: 4px; vertical-align: middle;">
+                          Verified Employer
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Subtle Card Divider -->
+                <div style="height: 1px; background-color: #e5e7eb; margin: 16px 0 14px 0;"></div>
+
+                <!-- 2-Column Meta Table (Restrained & Balanced) -->
+                <table width="100%" cellspacing="0" cellpadding="0" border="0">
+                  <tr>
+                    <td width="50%" valign="top" style="padding-right: 10px; padding-bottom: 12px;">
+                      <div style="font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 2px;">
+                        Location
+                      </div>
+                      <div style="font-size: 13px; font-weight: 500; color: #1f2937;">
+                        ${escapeHtml(workLocation)}
+                      </div>
+                    </td>
+                    <td width="50%" valign="top" style="padding-left: 10px; padding-bottom: 12px;">
+                      <div style="font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 2px;">
+                        Role &amp; Workplace
+                      </div>
+                      <div style="font-size: 13px; font-weight: 500; color: #1f2937;">
+                        ${roleAndWorkplace}
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td width="50%" valign="top" style="padding-right: 10px; padding-bottom: 12px;">
+                      <div style="font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 2px;">
+                        Compensation
+                      </div>
+                      <div style="font-size: 13px; font-weight: 500; color: #047857;">
+                        ${escapeHtml(salaryText)}
+                      </div>
+                    </td>
+                    <td width="50%" valign="top" style="padding-left: 10px; padding-bottom: 12px;">
+                      <div style="font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 2px;">
+                        Experience
+                      </div>
+                      <div style="font-size: 13px; font-weight: 500; color: #1f2937;">
+                        ${escapeHtml(experienceRequired)}
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td width="50%" valign="top" style="padding-right: 10px;">
+                      <div style="font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 2px;">
+                        Reference ID
+                      </div>
+                      <div style="font-size: 12px; font-family: -apple-system, monospace; font-weight: 500; color: #4f46e5;">
+                        ${escapeHtml(refCode)}
+                      </div>
+                    </td>
+                    <td width="50%" valign="top" style="padding-left: 10px;">
+                      <div style="font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 2px;">
+                        Date Submitted
+                      </div>
+                      <div style="font-size: 12.5px; font-weight: 400; color: #4b5563;">
+                        ${escapeHtml(formattedDate)}
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+
+              <!-- Screening Responses if any -->
+              ${screeningSection}
+
+              <!-- Application Progress Timeline -->
+              <div style="background-color: #fafafa; border: 1px solid #e5e7eb; border-radius: 10px; padding: 18px 20px; margin-bottom: 24px;">
+                <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 14px;">
+                  What to Expect Next
+                </div>
+
+                <!-- Step 1 (Completed) -->
+                <table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 12px;">
+                  <tr>
+                    <td width="28" valign="top">
+                      <div style="width: 20px; height: 20px; border-radius: 50%; background-color: #dcfce7; color: #15803d; font-size: 11px; font-weight: 700; text-align: center; line-height: 20px;">✓</div>
+                    </td>
+                    <td style="padding-left: 8px;">
+                      <div style="font-size: 13px; font-weight: 500; color: #111827;">Application Received</div>
+                      <div style="font-size: 12px; color: #6b7280; line-height: 1.4; margin-top: 2px;">Your profile and resume are in the employer's dashboard for review.</div>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Step 2 (In Progress) -->
+                <table width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 12px;">
+                  <tr>
+                    <td width="28" valign="top">
+                      <div style="width: 20px; height: 20px; border-radius: 50%; background-color: #f3f4f6; color: #6b7280; font-size: 11px; font-weight: 600; text-align: center; line-height: 20px;">2</div>
+                    </td>
+                    <td style="padding-left: 8px;">
+                      <div style="font-size: 13px; font-weight: 500; color: #374151;">Employer Review</div>
+                      <div style="font-size: 12px; color: #6b7280; line-height: 1.4; margin-top: 2px;">The recruitment team at ${escapeHtml(cleanCompanyName)} will review your qualifications.</div>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Step 3 (Upcoming) -->
+                <table width="100%" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td width="28" valign="top">
+                      <div style="width: 20px; height: 20px; border-radius: 50%; background-color: #f3f4f6; color: #6b7280; font-size: 11px; font-weight: 600; text-align: center; line-height: 20px;">3</div>
+                    </td>
+                    <td style="padding-left: 8px;">
+                      <div style="font-size: 13px; font-weight: 500; color: #374151;">Shortlisting &amp; Interview</div>
+                      <div style="font-size: 12px; color: #6b7280; line-height: 1.4; margin-top: 2px;">If shortlisted, you will be contacted directly through CareerFast and email.</div>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+
+              <!-- Sleek Modern CTA Button -->
+              <div style="text-align: center; margin: 24px 0 18px 0;">
+                <a href="${dashboardUrl}" target="_blank" style="display: inline-block; background-color: #2563eb; color: #ffffff !important; text-decoration: none; font-size: 13.5px; font-weight: 500; padding: 11px 28px; border-radius: 6px; letter-spacing: 0.1px;">
+                  View Application Status &rarr;
+                </a>
+                <div style="margin-top: 10px;">
+                  <a href="${jobPortalUrl}" target="_blank" style="color: #2563eb; text-decoration: none; font-size: 12.5px; font-weight: 400;">
+                    Explore more opportunities &rarr;
+                  </a>
+                </div>
+              </div>
+
+              <!-- Quiet Subtle Pro-Tip -->
+              <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 14px; margin-top: 20px;">
+                <div style="font-size: 12px; color: #6b7280; line-height: 1.5;">
+                  <span style="font-weight: 500; color: #374151;">Tip:</span> Keeping your profile headline, portfolio, and skills updated helps recruiters evaluate your background faster.
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Footer -->
+            <div style="background-color: #ffffff; border-top: 1px solid #f3f4f6; padding: 20px 28px; text-align: center; font-size: 11.5px; color: #9ca3af; line-height: 1.6;">
+              <p style="margin: 0 0 4px 0; color: #6b7280; font-weight: 500;">CareerFast &bull; Modern Recruitment Platform</p>
+              <p style="margin: 0 0 6px 0;">
+                This notification was sent to ${escapeHtml(candidateEmail)} regarding your job application.
+              </p>
+              <p style="margin: 0; font-size: 11px;">
+                &copy; ${currentYear} CareerFast Inc. All rights reserved. &bull;
+                <a href="${frontendUrl}" target="_blank" style="color: #6b7280; text-decoration: none;">careerfast.in</a>
+              </p>
+            </div>
+
+          </div>
+        </td>
+      </tr>
+    </table>
+  </div>
+</body>
+</html>`;
+
+    const attachments = [];
+    if (logoAttachment) attachments.push(logoAttachment);
+    if (companyLogoAttachment) attachments.push(companyLogoAttachment);
+
+    const mailOptions = {
+      from: `"${cleanCompanyName ? `${cleanCompanyName} via CareerFast` : 'CareerFast Applications'}" <${process.env.SMTP_FROM || 'hr@acte.in'}>`,
+      to: candidateEmail,
+      subject: subject,
+      html: htmlContent,
+      attachments: attachments,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[EmailModel] Application confirmation email sent to ${candidateEmail}:`, info?.messageId);
+    return { success: true, messageId: info?.messageId };
+  } catch (error) {
+    console.error(`[EmailModel] Error sending application confirmation email to ${candidateEmail}:`, error);
+    // Non-blocking return so applicant response is never interrupted
+    return { success: false, error: error.message };
+  }
+};
+
 module.exports = {
   sendVerificationEmail,
   verifyOTP,
   VerifyEmail,
   sendApplicationStatusEmail,
+  sendApplicationConfirmationEmail,
   sendCompetitionRegistrationEmail,
   sendMentorQueryEmail,
   sendTeamMemberInviteEmail,

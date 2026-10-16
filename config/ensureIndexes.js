@@ -28,6 +28,7 @@ async function ensureDatabaseIndexes() {
     await ensureIndex("users", "idx_users_created_date", "created_date");
     await ensureIndex("users", "idx_users_location", "location(50)");
     await ensureIndex("users", "idx_users_gender", "gender(10)");
+    await ensureIndex("users", "idx_users_last_login", "last_login");
 
     // Indexes on `user_professional`
     await ensureIndex("user_professional", "idx_user_prof_user_del", "user_id, is_deleted");
@@ -70,6 +71,8 @@ async function ensureDatabaseIndexes() {
 
     // users columns
     await ensureColumn("users", "auto_approve", "TINYINT(1) DEFAULT 0");
+    await ensureColumn("users", "last_login", "DATETIME NULL DEFAULT NULL");
+    await ensureColumn("users", "last_active", "DATETIME NULL DEFAULT NULL");
 
     // job_post columns
     await ensureColumn("job_post", "approval_status", "VARCHAR(50) DEFAULT 'approved'");

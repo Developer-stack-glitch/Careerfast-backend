@@ -22,7 +22,7 @@ const verifyJobPreviewToken = (jobId, token, authHeader) => {
       if (decoded && (decoded.role_id === 1 || decoded.role === 'admin' || decoded.is_admin || decoded.role_id === 2 || decoded.role_id === 3 || decoded.id)) {
         return true;
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // 2. Check if token is a signed preview token
     try {
@@ -32,7 +32,7 @@ const verifyJobPreviewToken = (jobId, token, authHeader) => {
       } catch (_) {
         try {
           decodedStr = Buffer.from(tokenToVerify, 'base64').toString('utf8');
-        } catch (_) {}
+        } catch (_) { }
       }
 
       if (decodedStr) {
@@ -52,7 +52,7 @@ const verifyJobPreviewToken = (jobId, token, authHeader) => {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   return false;
@@ -517,6 +517,214 @@ const jobPosting = async (request, response) => {
 };
 
 
+const handleCandidateApplicationConfirmation = async (postId, userId, formattedQuestions, applicationResult) => {
+  try {
+    // 1. Fetch candidate information
+    const [userRows] = await pool.query(
+      "SELECT id, first_name, last_name, email, phone FROM users WHERE id = ?",
+      [userId]
+    );
+
+    if (!userRows || userRows.length === 0 || !userRows[0].email) {
+      console.warn(`[handleCandidateApplicationConfirmation] Candidate user ${userId} not found or has no email.`);
+      return;
+    }
+
+    const candidate = userRows[0];
+    const candidateName = [candidate.first_name, candidate.last_name].filter(Boolean).join(" ").trim() || "Candidate";
+    const candidateEmail = candidate.email;
+
+    // 2. Fetch job posting details
+    const [jobRows] = await pool.query(
+      `SELECT 
+        id, user_id, job_title, company_name, company_logo, job_nature, 
+        duration_period, workplace_type, work_location, salary_type, 
+        min_salary, max_salary, currency, salary_duration, fixed_format, 
+        stipend_type, stipend_amount, experience_type, experience_required, 
+        hide_salary, recruiter_name 
+       FROM job_post WHERE id = ?`,
+      [postId]
+    );
+
+    if (!jobRows || jobRows.length === 0) {
+      console.warn(`[handleCandidateApplicationConfirmation] Job post ${postId} not found.`);
+      return;
+    }
+
+    const job = jobRows[0];
+    const jobTitle = job.job_title || "Job Application";
+    const companyName = job.company_name || "CareerFast Partner";
+    const jobNature = job.job_nature || "Job";
+    const workplaceType = job.workplace_type || "In Office";
+
+    // Clean company logo (support base64 data URIs, web URLs, and upload paths; exclude dummy/empty)
+    let companyLogo = null;
+    if (job.company_logo && typeof job.company_logo === "string") {
+      const rawLogo = job.company_logo.trim();
+      if (!rawLogo.includes("dummy") && rawLogo.length > 5) {
+        if (rawLogo.startsWith("/uploads/") || rawLogo.startsWith("uploads/")) {
+          companyLogo = `https://careerfast.in/${rawLogo.replace(/^\/+/, '')}`;
+        } else {
+          companyLogo = rawLogo;
+        }
+      }
+    }
+
+    // Format location cleanly
+    let workLocation = "Not Specified";
+    if (job.work_location) {
+      try {
+        const parsedLoc = JSON.parse(job.work_location);
+        if (Array.isArray(parsedLoc)) {
+          workLocation = parsedLoc.filter(Boolean).join(", ");
+        } else if (typeof parsedLoc === "string") {
+          workLocation = parsedLoc;
+        } else {
+          workLocation = String(job.work_location);
+        }
+      } catch (_) {
+        workLocation = String(job.work_location).replace(/[\[\]"]/g, "").trim();
+      }
+    }
+
+    // Format salary/stipend cleanly with locale number formatting
+    let salaryText = "Competitive";
+    const isSalaryHidden = job.hide_salary == 1 || job.hide_salary === true || job.hide_salary === "1";
+    if (!isSalaryHidden) {
+      const cur = job.currency === "USD" || job.currency === "$" ? "$" : (job.currency === "EUR" ? "€" : "₹");
+      if (job.job_nature === "Internship" || job.stipend_type) {
+        if (job.stipend_type === "Unpaid") {
+          salaryText = "Unpaid Internship";
+        } else if (job.stipend_type === "Performance Based") {
+          salaryText = "Performance Based";
+        } else if (job.stipend_amount && String(job.stipend_amount) !== "0") {
+          const num = Number(job.stipend_amount);
+          const amt = !isNaN(num) ? num.toLocaleString('en-IN') : job.stipend_amount;
+          salaryText = `${cur}${amt} / month`;
+        }
+      } else {
+        const duration = job.salary_duration?.toLowerCase() === "monthly" ? "month" : "year";
+        const formatNum = (val) => {
+          if (!val || String(val) === "0") return null;
+          const num = Number(val);
+          return !isNaN(num) ? num.toLocaleString('en-IN') : val;
+        };
+        const minFormatted = formatNum(job.min_salary);
+        const maxFormatted = formatNum(job.max_salary);
+        if (minFormatted && maxFormatted) {
+          salaryText = `${cur}${minFormatted} - ${cur}${maxFormatted} / ${duration}`;
+        } else if (minFormatted) {
+          salaryText = `${cur}${minFormatted} / ${duration}`;
+        } else if (maxFormatted) {
+          salaryText = `Up to ${cur}${maxFormatted} / ${duration}`;
+        }
+      }
+    } else {
+      salaryText = "Not Disclosed";
+    }
+
+    // Parse experience cleanly (strip any JSON [""] and fallback to experience_type)
+    let experienceRequired = "";
+    if (job.experience_required) {
+      try {
+        const parsedExp = JSON.parse(job.experience_required);
+        if (Array.isArray(parsedExp)) {
+          experienceRequired = parsedExp
+            .filter(Boolean)
+            .filter(s => typeof s === "string" && s.trim().length > 0)
+            .join(", ");
+        } else if (typeof parsedExp === "string") {
+          experienceRequired = parsedExp.trim();
+        }
+      } catch (_) {
+        experienceRequired = String(job.experience_required).replace(/[\[\]"]/g, "").trim();
+      }
+    }
+    if ((!experienceRequired || experienceRequired === '""') && job.experience_type) {
+      experienceRequired = String(job.experience_type).trim();
+    }
+    if (!experienceRequired || experienceRequired === '""') {
+      experienceRequired = "Not Specified";
+    }
+
+    const applicationRef = `CF-APP-${postId}-${userId}`;
+
+    // 3. Fetch screening questions and answers if candidate submitted any
+    let screeningAnswers = [];
+    if (Array.isArray(formattedQuestions) && formattedQuestions.length > 0) {
+      const qIds = formattedQuestions.map(q => q && q.questionId).filter(Boolean);
+      if (qIds.length > 0) {
+        try {
+          const [qRows] = await pool.query(
+            "SELECT id, question FROM job_post_questions WHERE id IN (?)",
+            [qIds]
+          );
+          const qMap = {};
+          qRows.forEach(q => { qMap[q.id] = q.question; });
+          screeningAnswers = formattedQuestions
+            .filter(q => q && q.questionId && q.answer)
+            .map(q => ({
+              question: qMap[q.questionId] || "Screening Question",
+              answer: q.answer
+            }));
+        } catch (qErr) {
+          console.warn("[handleCandidateApplicationConfirmation] Error fetching screening questions:", qErr.message);
+        }
+      }
+    }
+
+    // 4. Send Confirmation Email to Candidate
+    if (EmailModel.sendApplicationConfirmationEmail) {
+      await EmailModel.sendApplicationConfirmationEmail({
+        candidateEmail,
+        candidateName,
+        jobTitle,
+        companyName,
+        companyLogo,
+        jobNature,
+        workplaceType,
+        workLocation,
+        salaryText,
+        experienceRequired,
+        applicationRef,
+        screeningAnswers,
+        jobId: postId,
+      });
+      console.log(`[handleCandidateApplicationConfirmation] Application confirmation email sent to ${candidateEmail} for ${jobTitle} (${postId})`);
+    }
+
+    // 5. Notify recruiter via Firebase push notification if FCM token available
+    if (job.user_id && String(job.user_id) !== String(userId)) {
+      try {
+        const [recruiterRows] = await pool.query(
+          "SELECT id, fcm_token FROM users WHERE id = ?",
+          [job.user_id]
+        );
+        if (recruiterRows.length > 0 && recruiterRows[0].fcm_token) {
+          const message = {
+            notification: {
+              title: "New Job Application! 🎯",
+              body: `${candidateName} just applied for ${jobTitle}. Review their profile now!`,
+            },
+            webpush: {
+              notification: { icon: "/favicon.png", requireInteraction: true },
+              fcm_options: { link: "https://careerfast.in/candidate-profile/applied" },
+            },
+            token: recruiterRows[0].fcm_token,
+          };
+          admin.messaging().send(message)
+            .then(() => console.log(`[handleCandidateApplicationConfirmation] Recruiter push notification sent for job ${postId}`))
+            .catch(err => console.warn(`[handleCandidateApplicationConfirmation] Recruiter push notification error:`, err?.message));
+        }
+      } catch (pushErr) {
+        console.warn("[handleCandidateApplicationConfirmation] Push notification setup warning:", pushErr.message);
+      }
+    }
+  } catch (err) {
+    console.error("[handleCandidateApplicationConfirmation] Unexpected error:", err);
+  }
+};
+
 const applyForJob = async (request, response) => {
   const { postId, userId, answers } = request.body;
   const formattedQuestions = Array.isArray(answers) ? answers : [answers];
@@ -526,6 +734,15 @@ const applyForJob = async (request, response) => {
       userId,
       formattedQuestions
     );
+
+    // Send confirmation email asynchronously (does not block client response)
+    if (!result?.alreadyApplied) {
+      setImmediate(() => {
+        handleCandidateApplicationConfirmation(postId, userId, formattedQuestions, result).catch(err => {
+          console.error("Async application confirmation email error:", err);
+        });
+      });
+    }
 
     return response.status(200).send({
       message: "Job applied successfully",
@@ -566,12 +783,12 @@ const getJobPostByUserId = async (request, response) => {
   try {
     let parsedStatuses = [];
     if (statuses) {
-      try { parsedStatuses = JSON.parse(statuses); } catch(e) { parsedStatuses = statuses; }
+      try { parsedStatuses = JSON.parse(statuses); } catch (e) { parsedStatuses = statuses; }
     }
-    
+
     let parsedCategories = [];
     if (categories) {
-      try { parsedCategories = JSON.parse(categories); } catch(e) { parsedCategories = categories; }
+      try { parsedCategories = JSON.parse(categories); } catch (e) { parsedCategories = categories; }
     }
 
     const result = await JobsModel.getJobPostByUserId(user_id, limit, page, job_nature, search, parsedStatuses, parsedCategories, sort);
@@ -1714,13 +1931,13 @@ const deleteTeamMember = async (req, res) => {
   try {
     const memberId = req.params.id;
     const parentUserId = req.user.id;
-    
+
     if (!memberId) {
       return res.status(400).send({ success: false, message: "Member ID is required" });
     }
 
     const email = await JobsModel.deleteTeamMember(memberId, parentUserId);
-    
+
     if (email) {
       await JobsModel.deleteSubRecruiterUser(email);
       res.send({ success: true, message: "Team member deleted successfully" });
@@ -2245,11 +2462,11 @@ const approveJob = async (request, response) => {
     }
 
     const result = await JobsModel.updateApprovalStatus(id, 'approved');
-    
+
     // Fetch the job details to send notification
     const filters = { id: id };
     const posts = await JobsModel.getJobPosts(filters);
-    
+
     if (posts && posts.length > 0) {
       const job = posts[0];
       const notificationIcon = (job.company_logo && typeof job.company_logo === 'string' && !job.company_logo.startsWith('data:'))
@@ -2480,4 +2697,5 @@ module.exports = {
   approveAllJobs,
   makeJobActive,
   deleteJobPost,
+  handleCandidateApplicationConfirmation,
 };

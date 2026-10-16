@@ -1,9 +1,10 @@
 // controllers/ApplyController.js
 const admin = require("../config/firebase");
 const pool = require("../config/dbConfig.js");
+const JobsModel = require("../models/JobsModel");
 
 const applyJob = async (req, res) => {
-    const { postId, userId } = req.body;
+    const { postId, userId, answers } = req.body;
 
     if (!postId || !userId) {
         return res.status(400).json({
@@ -14,6 +15,19 @@ const applyJob = async (req, res) => {
 
     try {
         console.log(`📝 Application received: User ${userId} applying for Job ${postId}`);
+
+        // 0️⃣ Save application to applied_jobs table and trigger confirmation email
+        const formattedQuestions = Array.isArray(answers) ? answers : (answers ? [answers] : []);
+        const applyResult = await JobsModel.applyForJob(postId, userId, formattedQuestions);
+
+        if (!applyResult?.alreadyApplied) {
+            const { handleCandidateApplicationConfirmation } = require("./JobsController");
+            setImmediate(() => {
+                handleCandidateApplicationConfirmation(postId, userId, formattedQuestions, applyResult).catch(err => {
+                    console.error("Async confirmation email error in ApplyController:", err);
+                });
+            });
+        }
 
         // 1️⃣ Get recruiter + job info
         const [rows] = await pool.query(
@@ -76,7 +90,7 @@ const applyJob = async (req, res) => {
                         requireInteraction: true,
                     },
                     fcm_options: {
-                        link: "https://careerfast.in/admin-profile/applied",
+                        link: "https://careerfast.in/candidate-profile/applied",
                     },
                 },
                 token: recruiterToken,
