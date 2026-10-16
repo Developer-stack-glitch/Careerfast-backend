@@ -3142,7 +3142,7 @@ const JobsModel = {
           SELECT id, first_name, last_name, email, phone, location, created_date, is_active, profile_image, last_login 
           FROM users 
           WHERE role_id = 2 
-          ORDER BY COALESCE(last_login, created_date) DESC
+          ORDER BY created_date DESC, id DESC
           LIMIT 10
         `).catch(async (err) => {
           if (err && (err.code === 'ER_BAD_FIELD_ERROR' || err.errno === 1054)) {

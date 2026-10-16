@@ -5,7 +5,7 @@ const UserModel = {
   getUsers: async (page = null, limit = null, search = "", status = "", role = null, startDate = null, endDate = null, timeFilter = null, sortBy = null, sortOrder = null) => {
     try {
       // Calculate global stats (respecting search, ignoring status)
-      let baseQuery = `SELECT u.is_active FROM users u WHERE 1=1`;
+      let baseQuery = `SELECT u.is_active, u.created_date, u.last_login FROM users u WHERE 1=1`;
       let baseParams = [];
       
       if (role) {
@@ -60,11 +60,12 @@ const UserModel = {
         SELECT 
           COUNT(*) as total,
           SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
-          SUM(CASE WHEN is_active = 0 OR is_active IS NULL THEN 1 ELSE 0 END) as pending
+          SUM(CASE WHEN is_active = 0 OR is_active IS NULL THEN 1 ELSE 0 END) as pending,
+          SUM(CASE WHEN created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as recent
         FROM (${baseQuery}) as subquery
       `;
       const [statsResult] = await pool.query(statsQuery, baseParams);
-      const stats = statsResult[0] || { total: 0, active: 0, pending: 0 };
+      const stats = statsResult[0] || { total: 0, active: 0, pending: 0, recent: 0 };
 
       let query = `
         SELECT 
@@ -116,16 +117,18 @@ const UserModel = {
         queryParams.push(...dateParams);
       }
 
-      // If status filter is passed (active/pending)
+      // If status filter is passed (active/pending/recent)
       // Note: is_active could be Buffer or TINYINT in DB. Usually '1' for active.
       if (status === 'Active') {
         query += ` AND u.is_active = 1`;
       } else if (status === 'Pending' || status === 'Disabled') {
         query += ` AND (u.is_active = 0 OR u.is_active IS NULL)`;
+      } else if (status === 'Recent' || status === 'Recently Registered') {
+        query += ` AND u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)`;
       }
 
       // Build dynamic ORDER BY clause
-      let orderByClause = " ORDER BY COALESCE(u.last_login, u.created_date) DESC, u.id DESC";
+      let orderByClause = " ORDER BY u.created_date DESC, COALESCE(u.last_login, u.created_date) DESC, u.id DESC";
       const dir = (sortOrder && String(sortOrder).toLowerCase() === 'asc') ? 'ASC' : 'DESC';
 
       if (sortBy === 'candidate' || sortBy === 'employer') {
@@ -136,6 +139,8 @@ const UserModel = {
         orderByClause = ` ORDER BY u.is_active ${dir}, u.id ${dir}`;
       } else if (sortBy === 'last_login' || sortBy === 'last_active') {
         orderByClause = ` ORDER BY COALESCE(u.last_login, u.created_date) ${dir}, u.id ${dir}`;
+      } else if (sortBy === 'created_date' || sortBy === 'registered_date' || sortBy === 'recent') {
+        orderByClause = ` ORDER BY u.created_date ${dir}, u.id ${dir}`;
       }
 
       // We need total count for pagination before applying LIMIT
@@ -180,7 +185,8 @@ const UserModel = {
           stats: {
             total: stats.total || 0,
             active: stats.active || 0,
-            pending: stats.pending || 0
+            pending: stats.pending || 0,
+            recent: stats.recent || 0
           }
         };
       }
