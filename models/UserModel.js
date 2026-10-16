@@ -402,14 +402,8 @@ const UserModel = {
       await safeDelete(`DELETE FROM event_registrations WHERE userId = ?`, [id]);
       await safeDelete(`DELETE FROM workshop_registrations WHERE userId = ?`, [id]);
 
-      // 7. Delete admin permissions & messages
+      // 7. Delete admin permissions if any
       await safeDelete(`DELETE FROM admin_permissions WHERE user_id = ?`, [id]);
-      await safeDelete(`DELETE FROM messages WHERE sender_id = ? OR receiver_id = ?`, [id, id]);
-      await safeDelete(`DELETE FROM activity_logs WHERE user_id = ?`, [id]);
-      await safeDelete(`DELETE FROM notifications WHERE user_id = ?`, [id]);
-      await safeDelete(`DELETE FROM carts WHERE user_id = ?`, [id]);
-      await safeDelete(`DELETE FROM recordings WHERE user_id = ?`, [id]);
-      await safeDelete(`DELETE FROM assign_manager WHERE user_id = ? OR manager_id = ?`, [id, id]);
 
       // 8. Finally delete the user account and login credentials
       const [user] = await connection.query(`DELETE FROM users WHERE id = ?`, [id]);
