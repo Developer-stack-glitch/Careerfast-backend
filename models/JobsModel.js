@@ -372,10 +372,16 @@ const JobsModel = {
       // Insert Questions
       if (questions && questions.length > 0) {
         for (const q of questions) {
+          if (!q || !q.question) continue;
+          const qType = q.type || q.question_type || 'Short answer';
+          const qOptions = Array.isArray(q.options)
+            ? JSON.stringify(q.options)
+            : (typeof q.options === 'string' ? q.options : null);
+          const isReq = (q.isrequired === 1 || q.isrequired === true || q.isrequired === '1') ? 1 : 0;
           await pool.query(
-            `INSERT INTO job_post_questions (post_id, question, isrequired)
-           VALUES (?, ?, ?)`,
-            [lastJobPostId, q.question, q.isrequired]
+            `INSERT INTO job_post_questions (post_id, question, isrequired, question_type, options)
+           VALUES (?, ?, ?, ?, ?)`,
+            [lastJobPostId, q.question, isReq, qType, qOptions]
           );
         }
       }
@@ -572,8 +578,15 @@ const JobsModel = {
         ? questions.filter(q => q && typeof q === 'object' && q.question && String(q.question).trim() !== "")
         : [];
       if (validQuestions.length > 0) {
-        const query = `INSERT INTO job_post_questions (post_id, question, isrequired) VALUES ?`;
-        const values = validQuestions.map(q => [job_post_id, q.question, q.isrequired ? 1 : 0]);
+        const query = `INSERT INTO job_post_questions (post_id, question, isrequired, question_type, options) VALUES ?`;
+        const values = validQuestions.map(q => {
+          const qType = q.type || q.question_type || 'Short answer';
+          const qOptions = Array.isArray(q.options)
+            ? JSON.stringify(q.options)
+            : (typeof q.options === 'string' ? q.options : null);
+          const isReq = (q.isrequired === 1 || q.isrequired === true || q.isrequired === '1') ? 1 : 0;
+          return [job_post_id, q.question, isReq, qType, qOptions];
+        });
         await pool.query(query, [values]);
       }
 
@@ -1548,7 +1561,7 @@ const JobsModel = {
       let allQuestions = [];
       if (posts.length > 0) {
         const postIds = posts.map(p => p.id);
-        const questionQuery = `SELECT id, post_id, question, CASE WHEN isrequired = 1 THEN 1 ELSE 0 END AS isrequired FROM job_post_questions WHERE post_id IN (?) ORDER BY created_at ASC`;
+        const questionQuery = `SELECT id, post_id, question, CASE WHEN isrequired = 1 THEN 1 ELSE 0 END AS isrequired, COALESCE(question_type, 'Short answer') AS question_type, options FROM job_post_questions WHERE post_id IN (?) ORDER BY created_at ASC`;
         const [questionsResult] = await pool.query(questionQuery, [postIds]);
         allQuestions = questionsResult;
       }
@@ -1556,10 +1569,28 @@ const JobsModel = {
       // Group questions by post_id
       const questionsByPostId = {};
       for (const q of allQuestions) {
+        let parsedOptions = [];
+        if (q.options) {
+          try {
+            parsedOptions = typeof q.options === 'string' ? JSON.parse(q.options) : q.options;
+            if (!Array.isArray(parsedOptions)) parsedOptions = [];
+          } catch (e) {
+            parsedOptions = [];
+          }
+        }
+        const normalizedQ = {
+          id: q.id,
+          post_id: q.post_id,
+          question: q.question,
+          isrequired: q.isrequired,
+          question_type: q.question_type || 'Short answer',
+          type: q.question_type || 'Short answer',
+          options: parsedOptions
+        };
         if (!questionsByPostId[q.post_id]) {
           questionsByPostId[q.post_id] = [];
         }
-        questionsByPostId[q.post_id].push(q);
+        questionsByPostId[q.post_id].push(normalizedQ);
       }
 
       const now = dayjs().tz("Asia/Kolkata");
