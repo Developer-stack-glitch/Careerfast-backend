@@ -5,7 +5,27 @@ const UserModel = {
   getUsers: async (page = null, limit = null, search = "", status = "", role = null, startDate = null, endDate = null, timeFilter = null, sortBy = null, sortOrder = null) => {
     try {
       // Calculate global stats (respecting search, ignoring status)
-      let baseQuery = `SELECT u.is_active, u.created_date, u.last_login FROM users u WHERE 1=1`;
+      const scoreExpr = `(
+        (CASE WHEN NULLIF(TRIM(u.first_name), '') IS NOT NULL AND NULLIF(TRIM(u.email), '') IS NOT NULL AND NULLIF(TRIM(u.phone), '') IS NOT NULL THEN 20 
+              WHEN NULLIF(TRIM(u.first_name), '') IS NOT NULL AND (NULLIF(TRIM(u.email), '') IS NOT NULL OR NULLIF(TRIM(u.phone), '') IS NOT NULL) THEN 10 ELSE 0 END) +
+        (CASE WHEN u.profile_image IS NOT NULL AND u.profile_image != '' AND u.profile_image != 'null' AND u.profile_image != '#' THEN 10 ELSE 0 END) +
+        (CASE WHEN u.location IS NOT NULL AND u.location != '' AND u.location != 'null' AND u.location != 'Not Specified' AND u.location != 'Location N/A' THEN 10 ELSE 0 END) +
+        (CASE WHEN (u.about IS NOT NULL AND u.about != '') OR (u.headline IS NOT NULL AND u.headline != '') THEN 10 ELSE 0 END) +
+        (CASE WHEN (u.experince_type IS NOT NULL AND u.experince_type != '') OR u.total_years > 0 THEN 15 ELSE 0 END) +
+        (CASE WHEN ue.user_id IS NOT NULL OR NULLIF(u.course, '') IS NOT NULL OR NULLIF(u.class, '') IS NOT NULL THEN 15 ELSE 0 END) +
+        (CASE WHEN u.skills IS NOT NULL AND u.skills != '' AND u.skills != '[]' AND u.skills != 'null' THEN 10 ELSE 0 END) +
+        (CASE WHEN u.resume IS NOT NULL AND u.resume != '' AND u.resume != '#' AND u.resume != 'null' AND u.resume != 'Resume' THEN 10 ELSE 0 END)
+      )`;
+
+      let baseQuery = `
+        SELECT u.id, u.is_active, u.created_date, u.last_login,
+               ${scoreExpr} as profile_completion
+        FROM users u 
+        LEFT JOIN (
+          SELECT user_id FROM user_education WHERE is_deleted = 0 GROUP BY user_id
+        ) ue ON u.id = ue.user_id
+        WHERE 1=1
+      `;
       let baseParams = [];
       
       if (role) {
@@ -61,11 +81,13 @@ const UserModel = {
           COUNT(*) as total,
           SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
           SUM(CASE WHEN is_active = 0 OR is_active IS NULL THEN 1 ELSE 0 END) as pending,
-          SUM(CASE WHEN created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as recent
+          SUM(CASE WHEN created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as recent,
+          SUM(CASE WHEN profile_completion >= 80 THEN 1 ELSE 0 END) as completed,
+          SUM(CASE WHEN profile_completion < 80 THEN 1 ELSE 0 END) as uncompleted
         FROM (${baseQuery}) as subquery
       `;
       const [statsResult] = await pool.query(statsQuery, baseParams);
-      const stats = statsResult[0] || { total: 0, active: 0, pending: 0, recent: 0 };
+      const stats = statsResult[0] || { total: 0, active: 0, pending: 0, recent: 0, completed: 0, uncompleted: 0 };
 
       let query = `
         SELECT 
@@ -75,6 +97,8 @@ const UserModel = {
           ue.qualification AS education_qualification,
           ue.course AS education_course,
           ue.college AS education_college,
+          ${scoreExpr} AS profile_completion,
+          (SELECT COUNT(*) FROM applied_jobs aj WHERE aj.userId = u.id) AS applications_count,
           COALESCE(
             NULLIF(CONCAT_WS(' - ', NULLIF(ue.course, ''), NULLIF(ue.college, '')), ''),
             NULLIF(ue.college, ''), 
@@ -117,12 +141,16 @@ const UserModel = {
         queryParams.push(...dateParams);
       }
 
-      // If status filter is passed (active/pending/recent)
+      // If status filter is passed (active/pending/recent/complete/uncompleted)
       // Note: is_active could be Buffer or TINYINT in DB. Usually '1' for active.
       if (status === 'Active') {
         query += ` AND u.is_active = 1`;
       } else if (status === 'Pending' || status === 'Disabled') {
         query += ` AND (u.is_active = 0 OR u.is_active IS NULL)`;
+      } else if (status === 'Complete' || status === 'Completed') {
+        query += ` AND ${scoreExpr} >= 80`;
+      } else if (status === 'Uncompleted' || status === 'Incomplete') {
+        query += ` AND ${scoreExpr} < 80`;
       } else if (status === 'Recent' || status === 'Recently Registered') {
         query += ` AND u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)`;
       }
@@ -135,6 +163,8 @@ const UserModel = {
         orderByClause = ` ORDER BY NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), '') ${dir}, u.email ${dir}`;
       } else if (sortBy === 'education') {
         orderByClause = ` ORDER BY display_education ${dir}, u.location ${dir}`;
+      } else if (sortBy === 'completion' || sortBy === 'profile_completion') {
+        orderByClause = ` ORDER BY ${scoreExpr} ${dir}, u.id ${dir}`;
       } else if (sortBy === 'status') {
         orderByClause = ` ORDER BY u.is_active ${dir}, u.id ${dir}`;
       } else if (sortBy === 'last_login' || sortBy === 'last_active') {
@@ -186,7 +216,9 @@ const UserModel = {
             total: stats.total || 0,
             active: stats.active || 0,
             pending: stats.pending || 0,
-            recent: stats.recent || 0
+            recent: stats.recent || 0,
+            completed: Number(stats.completed || 0),
+            uncompleted: Number(stats.uncompleted || 0)
           }
         };
       }

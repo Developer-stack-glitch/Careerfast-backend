@@ -3355,7 +3355,25 @@ const JobsModel = {
           FROM job_post
           WHERE 1=1${jDateCond}
           GROUP BY job_nature
-        `)
+        `),
+        pool.query(`SELECT COUNT(*) as total FROM job_post WHERE (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL)${jDateCond}`),
+        pool.query(`SELECT COUNT(*) as total FROM recruiter_resume_access WHERE action_type = 'download'${jDateCond}`).catch(() => [[{ total: 0 }]]),
+        pool.query(`SELECT COALESCE(SUM(resume_downloads_used), 0) as resume_downloads, COALESCE(SUM(excel_downloads_used), 0) as excel_downloads, COALESCE(SUM(GREATEST(COALESCE(emails_sent, 0), COALESCE(emails_used, 0))), 0) as email_usage FROM subscription_usage`).catch(() => [[{ resume_downloads: 0, excel_downloads: 0, email_usage: 0 }]]),
+        pool.query(`SELECT COALESCE(SUM(excel_downloads), 0) as excel_downloads, COALESCE(SUM(email_count), 0) as email_usage FROM hr_credits_breakdown`).catch(() => [[{ excel_downloads: 0, email_usage: 0 }]]),
+        pool.query(`SELECT COUNT(*) as total FROM users WHERE role_id = 3 AND DATE(created_date) = CURDATE()`),
+        pool.query(`SELECT COUNT(*) as total FROM job_post WHERE (is_closed = 0 OR is_closed IS NULL) AND DATE(created_at) = CURDATE()`),
+        pool.query(`SELECT COUNT(*) as total FROM job_post WHERE (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL) AND DATE(created_at) = CURDATE()`),
+        pool.query(`SELECT COUNT(*) as total FROM recruiter_resume_access WHERE action_type = 'download' AND DATE(created_at) = CURDATE()`).catch(() => [[{ total: 0 }]]),
+        pool.query(`SELECT COUNT(*) as total FROM admin_audit_logs WHERE (action LIKE '%excel%' OR action LIKE '%export%') AND DATE(created_at) = CURDATE()`).catch(() => [[{ total: 0 }]]),
+        pool.query(`SELECT COALESCE(SUM(GREATEST(COALESCE(emails_sent, 0), COALESCE(emails_used, 0))), 0) as total FROM subscription_usage WHERE DATE(updated_at) = CURDATE()`).catch(() => [[{ total: 0 }]]),
+        pool.query(`SELECT COUNT(*) as total FROM users WHERE role_id = 2 AND is_active = 1${uDateCond}`),
+        pool.query(`SELECT COUNT(*) as total FROM users WHERE role_id = 2 AND (is_active = 0 OR is_active IS NULL)${uDateCond}`),
+        pool.query(`SELECT COUNT(aj.id) as total FROM applied_jobs aj JOIN job_post jp ON aj.postId = jp.id WHERE (jp.job_nature != 'Internship' OR jp.job_nature IS NULL)${jDateCond}`),
+        pool.query(`SELECT COUNT(aj.id) as total FROM applied_jobs aj JOIN job_post jp ON aj.postId = jp.id WHERE jp.job_nature = 'Internship'${jDateCond}`),
+        pool.query(`SELECT COUNT(*) as total FROM users WHERE role_id = 2 AND DATE(created_date) = CURDATE()`),
+        pool.query(`SELECT COUNT(*) as total FROM users WHERE role_id = 2 AND (DATE(last_login) = CURDATE() OR DATE(last_active) = CURDATE())`),
+        pool.query(`SELECT COUNT(aj.id) as total FROM applied_jobs aj JOIN job_post jp ON aj.postId = jp.id WHERE (jp.job_nature != 'Internship' OR jp.job_nature IS NULL) AND DATE(aj.created_at) = CURDATE()`),
+        pool.query(`SELECT COUNT(aj.id) as total FROM applied_jobs aj JOIN job_post jp ON aj.postId = jp.id WHERE jp.job_nature = 'Internship' AND DATE(aj.created_at) = CURDATE()`)
       ]);
 
       const candidatesCount = results[0][0];
@@ -3378,6 +3396,24 @@ const JobsModel = {
       const userGrowth = results[16][0];
       const applicationTrends = results[17][0];
       const jobsByNatureRaw = results[18][0];
+      const pendingJobsCount = results[19][0];
+      const resumeDownloadsCount = results[20][0];
+      const subUsageRes = results[21][0];
+      const hrCreditsRes = results[22][0];
+      const todayRecruiters = results[23][0];
+      const todayJobs = results[24][0];
+      const todayPending = results[25][0];
+      const todayResumeDownloads = results[26][0];
+      const todayExcelDownloads = results[27][0];
+      const todayEmailUsage = results[28][0];
+      const activeCandidatesCount = results[29][0];
+      const disabledCandidatesCount = results[30][0];
+      const jobsAppliedCount = results[31][0];
+      const internshipsAppliedCount = results[32][0];
+      const todayRegisterUsers = results[33][0];
+      const todayLoggedInUsers = results[34][0];
+      const todayJobsApplied = results[35][0];
+      const todayInternshipsApplied = results[36][0];
 
       const jobsByCategory = jobsByNatureRaw.map(j => ({ name: j.name || 'Other', value: j.value }));
 
@@ -3387,6 +3423,26 @@ const JobsModel = {
           recruiters: recruitersCount[0].total,
           jobs: jobsCount[0].total,
           applications: applicationsCount[0].total,
+          pendingApprovals: pendingJobsCount[0].total,
+          resumeDownloads: Math.max(Number(resumeDownloadsCount[0]?.total || 0), Number(subUsageRes[0]?.resume_downloads || 0)),
+          excelDownloads: Math.max(Number(subUsageRes[0]?.excel_downloads || 0), Number(hrCreditsRes[0]?.excel_downloads || 0)),
+          emailUsage: Math.max(Number(subUsageRes[0]?.email_usage || 0), Number(hrCreditsRes[0]?.email_usage || 0)),
+          activeCandidates: Number(activeCandidatesCount[0]?.total || 0),
+          disabledCandidates: Number(disabledCandidatesCount[0]?.total || 0),
+          jobsApplied: Number(jobsAppliedCount[0]?.total || 0),
+          internshipsApplied: Number(internshipsAppliedCount[0]?.total || 0),
+        },
+        todayCounts: {
+          recruiters: Number(todayRecruiters[0]?.total || 0),
+          jobs: Number(todayJobs[0]?.total || 0),
+          pendingApprovals: Number(todayPending[0]?.total || 0),
+          resumeDownloads: Number(todayResumeDownloads[0]?.total || 0),
+          excelDownloads: Number(todayExcelDownloads[0]?.total || 0),
+          emailUsage: Number(todayEmailUsage[0]?.total || 0),
+          registerUsers: Number(todayRegisterUsers[0]?.total || 0),
+          loggedInUsers: Number(todayLoggedInUsers[0]?.total || 0),
+          jobsApplied: Number(todayJobsApplied[0]?.total || 0),
+          internshipsApplied: Number(todayInternshipsApplied[0]?.total || 0),
         },
         lists: {
           candidates: candidatesList,
