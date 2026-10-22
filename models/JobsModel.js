@@ -1285,9 +1285,34 @@ const JobsModel = {
 
       // Company filter
       if (filters.companies && filters.companies.length > 0) {
-        const placeholders = filters.companies.map(() => "LOWER(?)").join(",");
-        whereClauses.push(`LOWER(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) IN (${placeholders})`);
-        queryParams.push(...filters.companies.map(c => c.toLowerCase()));
+        const COMPANY_ALIASES = {
+          "tcs": ["tcs", "tata consultancy services", "tcs (tata consultancy services)"],
+          "tata consultancy services": ["tcs", "tata consultancy services", "tcs (tata consultancy services)"],
+          "tcs (tata consultancy services)": ["tcs", "tata consultancy services", "tcs (tata consultancy services)"],
+          "l&t": ["l&t", "larsen & toubro", "larsen & toubro (l&t)"],
+          "larsen & toubro": ["l&t", "larsen & toubro", "larsen & toubro (l&t)"],
+          "larsen & toubro (l&t)": ["l&t", "larsen & toubro", "larsen & toubro (l&t)"],
+          "ibm": ["ibm", "international business machines"],
+        };
+
+        const expandedCompanies = new Set();
+        filters.companies.forEach((co) => {
+          if (!co || typeof co !== "string") return;
+          const trimmed = co.trim().toLowerCase();
+          if (!trimmed) return;
+          if (COMPANY_ALIASES[trimmed]) {
+            COMPANY_ALIASES[trimmed].forEach((a) => expandedCompanies.add(a));
+          } else {
+            expandedCompanies.add(trimmed);
+          }
+        });
+
+        if (expandedCompanies.size > 0) {
+          const compArray = Array.from(expandedCompanies);
+          const placeholders = compArray.map(() => "LOWER(?)").join(",");
+          whereClauses.push(`LOWER(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) IN (${placeholders})`);
+          queryParams.push(...compArray);
+        }
       }
 
       // Workplace location filter
@@ -2902,6 +2927,17 @@ const JobsModel = {
   getSearchSuggestions: async (query = "", type = "all") => {
     try {
       const cleanQ = (query || "").trim().toLowerCase();
+      const cacheKey = `${type}:${cleanQ}`;
+      
+      // In-memory caching for sub-millisecond response times
+      if (!global.__suggestionCache) {
+        global.__suggestionCache = new Map();
+      }
+      const cached = global.__suggestionCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp < 10 * 60 * 1000)) {
+        return cached.data;
+      }
+
       const suggestions = {
         roles: [],
         skills: [],
@@ -2933,10 +2969,19 @@ const JobsModel = {
       ];
 
       const standardLocations = [
-        "Bangalore / Bengaluru", "Chennai", "Hyderabad / Secunderabad", "Mumbai (All Areas)",
-        "Delhi / NCR", "Noida", "Gurgaon / Gurugram", "Pune", "Kolkata", "Ahmedabad",
-        "Remote / Work From Home", "Coimbatore", "Kochi / Cochin", "Jaipur", "Chandigarh",
-        "Indore", "Visakhapatnam", "Bhubaneswar", "Trivandrum", "Vadodara", "Nagpur", "Mysore"
+        "Bangalore", "Chennai", "Hyderabad", "Mumbai",
+        "Delhi", "Noida", "Gurgaon", "Pune", "Kolkata", "Ahmedabad",
+        "Coimbatore", "Chandigarh", "Chhatrapati Sambhajinagar", "Cuttack", "Cuddalore", "Chiplun", "Chandrapur",
+        "Calicut", "Kochi", "Jaipur", "Indore", "Visakhapatnam", "Bhubaneswar",
+        "Trivandrum", "Vadodara", "Nagpur", "Mysore", "Surat", "Bhopal", "Lucknow", "Patna",
+        "Agra", "Ajmer", "Aligarh", "Allahabad", "Amravati", "Amritsar", "Asansol",
+        "Bareilly", "Belgaum", "Bhavnagar", "Bikaner", "Bokaro", "Dehradun", "Dhanbad", "Durgapur",
+        "Ernakulam", "Erode", "Faridabad", "Ghaziabad", "Gwalior", "Guwahati", "Hubli", "Jabalpur",
+        "Jalandhar", "Jammu", "Jamshedpur", "Jodhpur", "Kanpur", "Kolhapur", "Kota", "Madurai",
+        "Mangalore", "Meerut", "Moradabad", "Nashik", "Panaji", "Pondicherry",
+        "Raipur", "Rajkot", "Ranchi", "Rourkela", "Salem", "Shimla", "Siliguri", "Solapur",
+        "Srinagar", "Thane", "Tiruchirappalli", "Tirunelveli", "Tirupati", "Tirupur",
+        "Udaipur", "Ujjain", "Varanasi", "Vijayawada", "Warangal", "Remote"
       ];
 
       const standardCompanies = [
@@ -2946,179 +2991,258 @@ const JobsModel = {
       ];
 
       if (!cleanQ) {
-        return {
+        const defaultData = {
           roles: standardRoles.slice(0, 8).map(r => ({ label: r, type: "designation" })),
           skills: standardSkills.slice(0, 8).map(s => ({ label: s, type: "skill" })),
           companies: standardCompanies.slice(0, 6).map(c => ({ label: c, type: "company" })),
           locations: standardLocations.slice(0, 8).map(l => ({ label: l, type: "location" }))
         };
+        global.__suggestionCache.set(cacheKey, { timestamp: Date.now(), data: defaultData });
+        return defaultData;
       }
+
+      // Parallel execution promises
+      const tasks = [];
 
       // 1. Roles / Designations
       if (type === "all" || type === "roles" || type === "designations") {
-        try {
-          const [dbTitles] = await pool.query(
-            `SELECT job_title, COUNT(*) as count 
-             FROM job_post 
-             WHERE LOWER(job_title) LIKE ? AND (is_closed = 0 OR is_closed IS NULL)
-             GROUP BY job_title 
-             ORDER BY count DESC 
-             LIMIT 10`,
-            [`%${cleanQ}%`]
-          );
-          
-          const roleMap = new Map();
-          dbTitles.forEach(row => {
-            if (row.job_title && row.job_title.trim()) {
-              const title = row.job_title.trim();
-              roleMap.set(title.toLowerCase(), { label: title, count: row.count, type: "designation" });
-            }
-          });
-
-          standardRoles
-            .filter(r => r.toLowerCase().includes(cleanQ))
-            .forEach(r => {
-              if (!roleMap.has(r.toLowerCase())) {
+        tasks.push(
+          (async () => {
+            try {
+              const roleMap = new Map();
+              
+              // Add matching standard roles first (instant high priority)
+              const startsWithR = standardRoles.filter(r => r.toLowerCase().startsWith(cleanQ));
+              const containsR = standardRoles.filter(r => !r.toLowerCase().startsWith(cleanQ) && r.toLowerCase().includes(cleanQ));
+              [...startsWithR, ...containsR].forEach(r => {
                 roleMap.set(r.toLowerCase(), { label: r, type: "designation" });
-              }
-            });
+              });
 
-          suggestions.roles = Array.from(roleMap.values()).slice(0, 8);
-        } catch (e) {
-          console.error("Error fetching db titles for suggestion:", e);
-        }
+              // Enrich with DB
+              const [dbTitles] = await pool.query(
+                `SELECT job_title FROM job_post 
+                 WHERE job_title LIKE ? AND (is_closed = 0 OR is_closed IS NULL)
+                 LIMIT 10`,
+                [`%${cleanQ}%`]
+              );
+              dbTitles.forEach(row => {
+                if (row.job_title && row.job_title.trim()) {
+                  const title = row.job_title.trim();
+                  if (!roleMap.has(title.toLowerCase())) {
+                    roleMap.set(title.toLowerCase(), { label: title, type: "designation" });
+                  }
+                }
+              });
+
+              suggestions.roles = Array.from(roleMap.values()).slice(0, 8);
+            } catch (e) {
+              console.error("Error fetching titles for suggestion:", e);
+            }
+          })()
+        );
       }
 
       // 2. Skills
       if (type === "all" || type === "skills") {
-        try {
-          const skillMap = new Map();
-
-          standardSkills
-            .filter(s => s.toLowerCase().includes(cleanQ))
-            .forEach(s => {
-              skillMap.set(s.toLowerCase(), { label: s, type: "skill" });
-            });
-
-          const [dbSkills] = await pool.query(
-            `SELECT skills FROM job_post WHERE skills IS NOT NULL AND (is_closed = 0 OR is_closed IS NULL) LIMIT 100`
-          );
-          dbSkills.forEach(row => {
+        tasks.push(
+          (async () => {
             try {
-              const parsed = typeof row.skills === 'string' ? JSON.parse(row.skills) : row.skills;
-              if (Array.isArray(parsed)) {
-                parsed.forEach(skill => {
-                  if (typeof skill === 'string' && skill.toLowerCase().includes(cleanQ)) {
-                    const trimmed = skill.trim();
-                    if (!skillMap.has(trimmed.toLowerCase())) {
-                      skillMap.set(trimmed.toLowerCase(), { label: trimmed, type: "skill" });
-                    }
-                  }
-                });
-              }
-            } catch (err) {}
-          });
+              const skillMap = new Map();
 
-          suggestions.skills = Array.from(skillMap.values()).slice(0, 8);
-        } catch (e) {
-          console.error("Error fetching skills for suggestion:", e);
-        }
+              // Add matching standard skills first
+              const startsWithS = standardSkills.filter(s => s.toLowerCase().startsWith(cleanQ));
+              const containsS = standardSkills.filter(s => !s.toLowerCase().startsWith(cleanQ) && s.toLowerCase().includes(cleanQ));
+              [...startsWithS, ...containsS].forEach(s => {
+                skillMap.set(s.toLowerCase(), { label: s, type: "skill" });
+              });
+
+              // Enrich from DB
+              const [dbSkills] = await pool.query(
+                `SELECT skills FROM job_post WHERE skills LIKE ? AND (is_closed = 0 OR is_closed IS NULL) LIMIT 20`,
+                [`%${cleanQ}%`]
+              );
+              dbSkills.forEach(row => {
+                try {
+                  const parsed = typeof row.skills === 'string' ? JSON.parse(row.skills) : row.skills;
+                  if (Array.isArray(parsed)) {
+                    parsed.forEach(skill => {
+                      if (typeof skill === 'string' && skill.toLowerCase().includes(cleanQ)) {
+                        const trimmed = skill.trim();
+                        if (!skillMap.has(trimmed.toLowerCase())) {
+                          skillMap.set(trimmed.toLowerCase(), { label: trimmed, type: "skill" });
+                        }
+                      }
+                    });
+                  }
+                } catch (err) {}
+              });
+
+              suggestions.skills = Array.from(skillMap.values()).slice(0, 8);
+            } catch (e) {
+              console.error("Error fetching skills for suggestion:", e);
+            }
+          })()
+        );
       }
 
       // 3. Companies
       if (type === "all" || type === "companies") {
-        try {
-          const [dbCompanies] = await pool.query(
-            `SELECT TRIM(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) AS name, COUNT(*) as count 
-             FROM job_post 
-             LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id 
-             WHERE (LOWER(job_post.company_name) LIKE ? OR LOWER(hr_profiles.company_name) LIKE ?) 
-               AND (job_post.is_closed = 0 OR job_post.is_closed IS NULL)
-             GROUP BY TRIM(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name))
-             ORDER BY count DESC 
-             LIMIT 6`,
-            [`%${cleanQ}%`, `%${cleanQ}%`]
-          );
-
-          const compMap = new Map();
-          dbCompanies.forEach(c => {
-            if (c.name && c.name.trim()) {
-              compMap.set(c.name.toLowerCase(), { label: c.name.trim(), count: c.count, type: "company" });
-            }
-          });
-
-          standardCompanies
-            .filter(c => c.toLowerCase().includes(cleanQ))
-            .forEach(c => {
-              if (!compMap.has(c.toLowerCase())) {
-                compMap.set(c.toLowerCase(), { label: c, type: "company" });
-              }
-            });
-
-          suggestions.companies = Array.from(compMap.values()).slice(0, 6);
-        } catch (e) {
-          console.error("Error fetching companies for suggestion:", e);
-        }
-      }
-
-      // 4. Locations
-      if (type === "all" || type === "locations") {
-        try {
-          const locMap = new Map();
-          standardLocations
-            .filter(l => l.toLowerCase().includes(cleanQ))
-            .forEach(l => {
-              locMap.set(l.toLowerCase(), { label: l, type: "location" });
-            });
-
-          const [dbLocs] = await pool.query(
-            `SELECT work_location FROM job_post WHERE work_location IS NOT NULL AND (is_closed = 0 OR is_closed IS NULL) LIMIT 100`
-          );
-          dbLocs.forEach(row => {
+        tasks.push(
+          (async () => {
             try {
-              const parsed = typeof row.work_location === 'string' ? JSON.parse(row.work_location) : row.work_location;
-              const locArray = Array.isArray(parsed) ? parsed : [row.work_location];
-              locArray.forEach(loc => {
-                if (typeof loc === 'string' && loc.toLowerCase().includes(cleanQ)) {
-                  const trimmed = loc.trim();
-                  if (!locMap.has(trimmed.toLowerCase())) {
-                    locMap.set(trimmed.toLowerCase(), { label: trimmed, type: "location" });
+              const compMap = new Map();
+
+              // Add standard companies first
+              standardCompanies
+                .filter(c => c.toLowerCase().includes(cleanQ))
+                .forEach(c => {
+                  compMap.set(c.toLowerCase(), { label: c, type: "company" });
+                });
+
+              // Fast DB lookup
+              const [dbCompanies] = await pool.query(
+                `SELECT DISTINCT company_name FROM job_post 
+                 WHERE company_name LIKE ? AND (is_closed = 0 OR is_closed IS NULL)
+                 LIMIT 6`,
+                [`%${cleanQ}%`]
+              );
+              dbCompanies.forEach(c => {
+                if (c.company_name && c.company_name.trim()) {
+                  const name = c.company_name.trim();
+                  if (!compMap.has(name.toLowerCase())) {
+                    compMap.set(name.toLowerCase(), { label: name, type: "company" });
                   }
                 }
               });
-            } catch (err) {}
-          });
 
-          // Also pull from worldwide locations API if user typed a query
-          if (cleanQ.length >= 2) {
-            try {
-              const LocationController = require('../controllers/LocationController');
-              const geoLocs = await LocationController.fetchLocationsInternal(cleanQ);
-              if (Array.isArray(geoLocs)) {
-                geoLocs.forEach(item => {
-                  const name = item.city || item.mainText || item.label;
-                  if (name && !locMap.has(name.toLowerCase())) {
-                    locMap.set(name.toLowerCase(), {
-                      label: item.mainText || item.label,
-                      subText: item.subText || item.state || item.country || '',
-                      fullLabel: item.label,
-                      city: item.city || item.mainText,
-                      type: "location"
-                    });
-                  }
-                });
-              }
-            } catch (geoErr) {
-              console.warn("Error fetching geocoded locations in suggestions:", geoErr.message);
+              suggestions.companies = Array.from(compMap.values()).slice(0, 6);
+            } catch (e) {
+              console.error("Error fetching companies for suggestion:", e);
             }
-          }
-
-          suggestions.locations = Array.from(locMap.values()).slice(0, 10);
-        } catch (e) {
-          console.error("Error fetching locations for suggestion:", e);
-        }
+          })()
+        );
       }
 
+      // 4. Locations (Single clean names only)
+      if (type === "all" || type === "locations") {
+        tasks.push(
+          (async () => {
+            try {
+              const locMap = new Map();
+              const cleanLocation = (s) => (s || '').split('/')[0].split('(')[0].split(',')[0].trim();
+
+              const cityAliases = {
+                "bengaluru": "Bangalore",
+                "bang": "Bangalore",
+                "blr": "Bangalore",
+                "bombay": "Mumbai",
+                "mum": "Mumbai",
+                "madras": "Chennai",
+                "chen": "Chennai",
+                "maa": "Chennai",
+                "calcutta": "Kolkata",
+                "kol": "Kolkata",
+                "secunderabad": "Hyderabad",
+                "hyd": "Hyderabad",
+                "gurugram": "Gurgaon",
+                "gur": "Gurgaon",
+                "prayagraj": "Allahabad",
+                "cochin": "Kochi",
+                "ernakulam": "Kochi",
+                "kozhikode": "Calicut",
+                "trichy": "Tiruchirappalli",
+                "puducherry": "Pondicherry",
+                "goa": "Panaji",
+                "vizag": "Visakhapatnam",
+                "baroda": "Vadodara",
+                "trivandrum": "Trivandrum",
+                "thiruvananthapuram": "Trivandrum"
+              };
+
+              const aliasCity = cityAliases[cleanQ];
+              if (aliasCity) {
+                locMap.set(aliasCity.toLowerCase(), { label: aliasCity, type: "location" });
+              }
+
+              const startsWithQ = [];
+              const containsQ = [];
+              standardLocations.forEach(l => {
+                const singleName = cleanLocation(l);
+                const lower = singleName.toLowerCase();
+                if (lower.startsWith(cleanQ)) {
+                  startsWithQ.push(singleName);
+                } else if (lower.includes(cleanQ)) {
+                  containsQ.push(singleName);
+                }
+              });
+
+              [...startsWithQ, ...containsQ].forEach(singleName => {
+                if (singleName && !locMap.has(singleName.toLowerCase())) {
+                  locMap.set(singleName.toLowerCase(), { label: singleName, type: "location" });
+                }
+              });
+
+              // Enrich from DB
+              const [dbLocs] = await pool.query(
+                `SELECT work_location FROM job_post WHERE work_location LIKE ? AND (is_closed = 0 OR is_closed IS NULL) LIMIT 20`,
+                [`%${cleanQ}%`]
+              );
+              dbLocs.forEach(row => {
+                try {
+                  const parsed = typeof row.work_location === 'string' ? JSON.parse(row.work_location) : row.work_location;
+                  const locArray = Array.isArray(parsed) ? parsed : [row.work_location];
+                  locArray.forEach(loc => {
+                    if (typeof loc === 'string') {
+                      const singleName = cleanLocation(loc);
+                      if (singleName && singleName.toLowerCase().includes(cleanQ)) {
+                        if (!locMap.has(singleName.toLowerCase())) {
+                          locMap.set(singleName.toLowerCase(), { label: singleName, type: "location" });
+                        }
+                      }
+                    }
+                  });
+                } catch (err) {}
+              });
+
+              // If no city matched in standardLocations or DB, fallback to geocoder for actual cities only
+              if (locMap.size === 0 && cleanQ.length >= 3) {
+                try {
+                  const LocationController = require('../controllers/LocationController');
+                  const geoLocs = await LocationController.fetchLocationsInternal(cleanQ);
+                  if (Array.isArray(geoLocs)) {
+                    geoLocs.forEach(item => {
+                      const raw = item.city || item.mainText || '';
+                      if (!raw) return;
+                      // Filter out POIs like Metro, Port, Institute, Station, Cantonment, University
+                      if (/metro|port|institute|station|highway|cantonment|railway|airport|hospital|school|college|university/i.test(raw)) {
+                        return;
+                      }
+                      const singleName = cleanLocation(raw);
+                      if (singleName && !locMap.has(singleName.toLowerCase())) {
+                        locMap.set(singleName.toLowerCase(), {
+                          label: singleName,
+                          type: "location"
+                        });
+                      }
+                    });
+                  }
+                } catch (geoErr) {
+                  console.warn("Error fetching geocoded locations in suggestions:", geoErr.message);
+                }
+              }
+
+              suggestions.locations = Array.from(locMap.values()).slice(0, 10);
+            } catch (e) {
+              console.error("Error fetching locations for suggestion:", e);
+            }
+          })()
+        );
+      }
+
+      await Promise.all(tasks);
+
+      // Cache the result
+      global.__suggestionCache.set(cacheKey, { timestamp: Date.now(), data: suggestions });
       return suggestions;
     } catch (error) {
       throw new Error(error.message);
@@ -3163,6 +3287,8 @@ const JobsModel = {
         uDateCond = " AND created_date >= DATE_SUB(NOW(), INTERVAL 1 YEAR)";
         jDateCond = " AND created_at >= DATE_SUB(NOW(), INTERVAL 1 YEAR)";
       }
+
+      const ajDateCond = jDateCond ? jDateCond.replaceAll("created_at", "aj.created_at") : "";
 
       const results = await Promise.all([
         pool.query(`SELECT COUNT(*) as total FROM users WHERE role_id = 2${uDateCond}`),
@@ -3368,8 +3494,8 @@ const JobsModel = {
         pool.query(`SELECT COALESCE(SUM(GREATEST(COALESCE(emails_sent, 0), COALESCE(emails_used, 0))), 0) as total FROM subscription_usage WHERE DATE(updated_at) = CURDATE()`).catch(() => [[{ total: 0 }]]),
         pool.query(`SELECT COUNT(*) as total FROM users WHERE role_id = 2 AND is_active = 1${uDateCond}`),
         pool.query(`SELECT COUNT(*) as total FROM users WHERE role_id = 2 AND (is_active = 0 OR is_active IS NULL)${uDateCond}`),
-        pool.query(`SELECT COUNT(aj.id) as total FROM applied_jobs aj JOIN job_post jp ON aj.postId = jp.id WHERE (jp.job_nature != 'Internship' OR jp.job_nature IS NULL)${jDateCond}`),
-        pool.query(`SELECT COUNT(aj.id) as total FROM applied_jobs aj JOIN job_post jp ON aj.postId = jp.id WHERE jp.job_nature = 'Internship'${jDateCond}`),
+        pool.query(`SELECT COUNT(aj.id) as total FROM applied_jobs aj JOIN job_post jp ON aj.postId = jp.id WHERE (jp.job_nature != 'Internship' OR jp.job_nature IS NULL)${ajDateCond}`),
+        pool.query(`SELECT COUNT(aj.id) as total FROM applied_jobs aj JOIN job_post jp ON aj.postId = jp.id WHERE jp.job_nature = 'Internship'${ajDateCond}`),
         pool.query(`SELECT COUNT(*) as total FROM users WHERE role_id = 2 AND DATE(created_date) = CURDATE()`),
         pool.query(`SELECT COUNT(*) as total FROM users WHERE role_id = 2 AND (DATE(last_login) = CURDATE() OR DATE(last_active) = CURDATE())`),
         pool.query(`SELECT COUNT(aj.id) as total FROM applied_jobs aj JOIN job_post jp ON aj.postId = jp.id WHERE (jp.job_nature != 'Internship' OR jp.job_nature IS NULL) AND DATE(aj.created_at) = CURDATE()`),

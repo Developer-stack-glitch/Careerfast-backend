@@ -37,6 +37,8 @@ router.use("/events", eventRoutes);
 
 // Login module APIs
 router.post("/login", LoginController.login);
+router.post("/sendLoginOTP", LoginController.sendLoginOTP);
+router.post("/verifyLoginOTP", LoginController.verifyLoginOTP);
 router.get("/auth/verify-session", verifyToken, (req, res) => {
   res.status(200).json({ success: true, user: req.user });
 });

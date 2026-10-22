@@ -2,102 +2,212 @@ const pool = require("../config/dbConfig");
 const bcrypt = require("bcrypt");
 
 const UserModel = {
+  recalculateProfileCompletion: async (userId) => {
+    try {
+      if (!userId) return;
+      await pool.query(`
+        UPDATE users u
+        LEFT JOIN (SELECT user_id FROM user_education WHERE is_deleted = 0 AND user_id = ? GROUP BY user_id) ue ON u.id = ue.user_id
+        SET u.profile_completion = (
+          (CASE WHEN NULLIF(TRIM(u.first_name), '') IS NOT NULL AND NULLIF(TRIM(u.email), '') IS NOT NULL AND NULLIF(TRIM(u.phone), '') IS NOT NULL THEN 20 
+                WHEN NULLIF(TRIM(u.first_name), '') IS NOT NULL AND (NULLIF(TRIM(u.email), '') IS NOT NULL OR NULLIF(TRIM(u.phone), '') IS NOT NULL) THEN 10 ELSE 0 END) +
+          (CASE WHEN u.profile_image IS NOT NULL AND u.profile_image != '' AND u.profile_image != 'null' AND u.profile_image != '#' THEN 10 ELSE 0 END) +
+          (CASE WHEN u.location IS NOT NULL AND u.location != '' AND u.location != 'null' AND u.location != 'Not Specified' AND u.location != 'Location N/A' THEN 10 ELSE 0 END) +
+          (CASE WHEN (u.about IS NOT NULL AND u.about != '') OR (u.headline IS NOT NULL AND u.headline != '') THEN 10 ELSE 0 END) +
+          (CASE WHEN (u.experince_type IS NOT NULL AND u.experince_type != '') OR u.total_years > 0 THEN 15 ELSE 0 END) +
+          (CASE WHEN ue.user_id IS NOT NULL OR NULLIF(u.course, '') IS NOT NULL OR NULLIF(u.class, '') IS NOT NULL THEN 15 ELSE 0 END) +
+          (CASE WHEN u.skills IS NOT NULL AND u.skills != '' AND u.skills != '[]' AND u.skills != 'null' THEN 10 ELSE 0 END) +
+          (CASE WHEN u.resume IS NOT NULL AND u.resume != '' AND u.resume != '#' AND u.resume != 'null' AND u.resume != 'Resume' THEN 10 ELSE 0 END)
+        )
+        WHERE u.id = ?
+      `, [userId, userId]);
+    } catch (e) {
+      console.warn("Failed to recalculate profile_completion for user", userId, e.message);
+    }
+  },
+
   getUsers: async (page = null, limit = null, search = "", status = "", role = null, startDate = null, endDate = null, timeFilter = null, sortBy = null, sortOrder = null) => {
     try {
-      // Calculate global stats (respecting search, ignoring status)
-      const scoreExpr = `(
-        (CASE WHEN NULLIF(TRIM(u.first_name), '') IS NOT NULL AND NULLIF(TRIM(u.email), '') IS NOT NULL AND NULLIF(TRIM(u.phone), '') IS NOT NULL THEN 20 
-              WHEN NULLIF(TRIM(u.first_name), '') IS NOT NULL AND (NULLIF(TRIM(u.email), '') IS NOT NULL OR NULLIF(TRIM(u.phone), '') IS NOT NULL) THEN 10 ELSE 0 END) +
-        (CASE WHEN u.profile_image IS NOT NULL AND u.profile_image != '' AND u.profile_image != 'null' AND u.profile_image != '#' THEN 10 ELSE 0 END) +
-        (CASE WHEN u.location IS NOT NULL AND u.location != '' AND u.location != 'null' AND u.location != 'Not Specified' AND u.location != 'Location N/A' THEN 10 ELSE 0 END) +
-        (CASE WHEN (u.about IS NOT NULL AND u.about != '') OR (u.headline IS NOT NULL AND u.headline != '') THEN 10 ELSE 0 END) +
-        (CASE WHEN (u.experince_type IS NOT NULL AND u.experince_type != '') OR u.total_years > 0 THEN 15 ELSE 0 END) +
-        (CASE WHEN ue.user_id IS NOT NULL OR NULLIF(u.course, '') IS NOT NULL OR NULLIF(u.class, '') IS NOT NULL THEN 15 ELSE 0 END) +
-        (CASE WHEN u.skills IS NOT NULL AND u.skills != '' AND u.skills != '[]' AND u.skills != 'null' THEN 10 ELSE 0 END) +
-        (CASE WHEN u.resume IS NOT NULL AND u.resume != '' AND u.resume != '#' AND u.resume != 'null' AND u.resume != 'Resume' THEN 10 ELSE 0 END)
-      )`;
-
-      let baseQuery = `
-        SELECT u.id, u.is_active, u.created_date, u.last_login,
-               ${scoreExpr} as profile_completion
-        FROM users u 
-        LEFT JOIN (
-          SELECT user_id FROM user_education WHERE is_deleted = 0 GROUP BY user_id
-        ) ue ON u.id = ue.user_id
-        WHERE 1=1
-      `;
+      let baseWhere = " WHERE 1=1";
       let baseParams = [];
       
       if (role) {
         const rolesArray = String(role).split(',').map(r => r.trim());
-        baseQuery += ` AND u.role_id IN (?)`;
+        baseWhere += ` AND u.role_id IN (?)`;
         baseParams.push(rolesArray);
       }
       
       if (search) {
-        baseQuery += ` AND (u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ?)`;
+        baseWhere += ` AND (u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ?)`;
         const searchPattern = `%${search}%`;
         baseParams.push(searchPattern, searchPattern, searchPattern);
       }
 
+      // Date filtering conditions for created_date and last_login/last_active
+      let createdDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+      let lastLoginCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 30 DAY))";
       let dateCondition = "";
       let dateParams = [];
+      let selectDateParams = [];
+
       if (startDate && endDate) {
-        dateCondition = " AND DATE(COALESCE(u.last_login, u.created_date)) BETWEEN ? AND ?";
-        dateParams = [startDate, endDate];
+        createdDateCond = "DATE(u.created_date) BETWEEN ? AND ?";
+        lastLoginCond = "(DATE(u.last_login) BETWEEN ? AND ? OR DATE(u.last_active) BETWEEN ? AND ?)";
+        selectDateParams = [startDate, endDate, startDate, endDate, startDate, endDate];
+        dateCondition = " AND (DATE(u.created_date) BETWEEN ? AND ? OR DATE(u.last_login) BETWEEN ? AND ? OR DATE(u.last_active) BETWEEN ? AND ?)";
+        dateParams = [startDate, endDate, startDate, endDate, startDate, endDate];
       } else if (startDate) {
-        dateCondition = " AND DATE(COALESCE(u.last_login, u.created_date)) >= ?";
-        dateParams = [startDate];
+        createdDateCond = "DATE(u.created_date) >= ?";
+        lastLoginCond = "(DATE(u.last_login) >= ? OR DATE(u.last_active) >= ?)";
+        selectDateParams = [startDate, startDate, startDate];
+        dateCondition = " AND (DATE(u.created_date) >= ? OR DATE(u.last_login) >= ? OR DATE(u.last_active) >= ?)";
+        dateParams = [startDate, startDate, startDate];
       } else if (endDate) {
-        dateCondition = " AND DATE(COALESCE(u.last_login, u.created_date)) <= ?";
-        dateParams = [endDate];
+        createdDateCond = "DATE(u.created_date) <= ?";
+        lastLoginCond = "(DATE(u.last_login) <= ? OR DATE(u.last_active) <= ?)";
+        selectDateParams = [endDate, endDate, endDate];
+        dateCondition = " AND (DATE(u.created_date) <= ? OR DATE(u.last_login) <= ? OR DATE(u.last_active) <= ?)";
+        dateParams = [endDate, endDate, endDate];
       } else if (timeFilter) {
         if (timeFilter === "Today") {
-          dateCondition = " AND DATE(COALESCE(u.last_login, u.created_date)) = CURDATE()";
+          createdDateCond = "DATE(u.created_date) = CURDATE()";
+          lastLoginCond = "(DATE(u.last_login) = CURDATE() OR DATE(u.last_active) = CURDATE())";
+          dateCondition = " AND (DATE(u.created_date) = CURDATE() OR DATE(u.last_login) = CURDATE() OR DATE(u.last_active) = CURDATE())";
         } else if (timeFilter === "Yesterday") {
-          dateCondition = " AND DATE(COALESCE(u.last_login, u.created_date)) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)";
+          createdDateCond = "DATE(u.created_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)";
+          lastLoginCond = "(DATE(u.last_login) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) OR DATE(u.last_active) = DATE_SUB(CURDATE(), INTERVAL 1 DAY))";
+          dateCondition = " AND (DATE(u.created_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) OR DATE(u.last_login) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) OR DATE(u.last_active) = DATE_SUB(CURDATE(), INTERVAL 1 DAY))";
         } else if (timeFilter === "Last 7 Days") {
-          dateCondition = " AND COALESCE(u.last_login, u.created_date) >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+          createdDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+          lastLoginCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
+          dateCondition = " AND (u.created_date >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR u.last_login >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
         } else if (timeFilter === "Last 30 Days") {
-          dateCondition = " AND COALESCE(u.last_login, u.created_date) >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+          createdDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+          lastLoginCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 30 DAY))";
+          dateCondition = " AND (u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.last_login >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 30 DAY))";
         } else if (timeFilter === "This Month") {
-          dateCondition = " AND COALESCE(u.last_login, u.created_date) >= DATE_FORMAT(NOW(), '%Y-%m-01')";
+          createdDateCond = "u.created_date >= DATE_FORMAT(NOW(), '%Y-%m-01')";
+          lastLoginCond = "(u.last_login >= DATE_FORMAT(NOW(), '%Y-%m-01') OR u.last_active >= DATE_FORMAT(NOW(), '%Y-%m-01'))";
+          dateCondition = " AND (u.created_date >= DATE_FORMAT(NOW(), '%Y-%m-01') OR u.last_login >= DATE_FORMAT(NOW(), '%Y-%m-01') OR u.last_active >= DATE_FORMAT(NOW(), '%Y-%m-01'))";
         } else if (timeFilter === "Last Month") {
-          dateCondition = " AND (COALESCE(u.last_login, u.created_date) >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND COALESCE(u.last_login, u.created_date) < DATE_FORMAT(NOW(), '%Y-%m-01'))";
+          createdDateCond = "u.created_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.created_date < DATE_FORMAT(NOW(), '%Y-%m-01')";
+          lastLoginCond = "((u.last_login >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.last_login < DATE_FORMAT(NOW(), '%Y-%m-01')) OR (u.last_active >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.last_active < DATE_FORMAT(NOW(), '%Y-%m-01')))";
+          dateCondition = " AND ((u.created_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.created_date < DATE_FORMAT(NOW(), '%Y-%m-01')) OR (u.last_login >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.last_login < DATE_FORMAT(NOW(), '%Y-%m-01')) OR (u.last_active >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.last_active < DATE_FORMAT(NOW(), '%Y-%m-01')))";
         } else if (timeFilter === "This Quarter") {
-          dateCondition = " AND COALESCE(u.last_login, u.created_date) >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
+          createdDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
+          lastLoginCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 3 MONTH) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 3 MONTH))";
+          dateCondition = " AND (u.created_date >= DATE_SUB(NOW(), INTERVAL 3 MONTH) OR u.last_login >= DATE_SUB(NOW(), INTERVAL 3 MONTH) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 3 MONTH))";
         } else if (timeFilter === "This Year") {
-          dateCondition = " AND COALESCE(u.last_login, u.created_date) >= DATE_SUB(NOW(), INTERVAL 1 YEAR)";
+          createdDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 1 YEAR)";
+          lastLoginCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 1 YEAR) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 1 YEAR))";
+          dateCondition = " AND (u.created_date >= DATE_SUB(NOW(), INTERVAL 1 YEAR) OR u.last_login >= DATE_SUB(NOW(), INTERVAL 1 YEAR) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 1 YEAR))";
         }
       }
 
       if (dateCondition) {
-        baseQuery += dateCondition;
+        baseWhere += dateCondition;
         baseParams.push(...dateParams);
       }
 
+      // 1. Fast global stats query using indexed columns directly from users table
       const statsQuery = `
         SELECT 
           COUNT(*) as total,
           SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
           SUM(CASE WHEN is_active = 0 OR is_active IS NULL THEN 1 ELSE 0 END) as pending,
-          SUM(CASE WHEN created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as recent,
+          SUM(CASE WHEN ${createdDateCond} THEN 1 ELSE 0 END) as new_registered,
+          SUM(CASE WHEN ${lastLoginCond} THEN 1 ELSE 0 END) as last_login,
           SUM(CASE WHEN profile_completion >= 80 THEN 1 ELSE 0 END) as completed,
           SUM(CASE WHEN profile_completion < 80 THEN 1 ELSE 0 END) as uncompleted
-        FROM (${baseQuery}) as subquery
+        FROM users u
+        ${baseWhere}
       `;
-      const [statsResult] = await pool.query(statsQuery, baseParams);
-      const stats = statsResult[0] || { total: 0, active: 0, pending: 0, recent: 0, completed: 0, uncompleted: 0 };
+      const [statsResult] = await pool.query(statsQuery, [...selectDateParams, ...baseParams]);
+      const stats = statsResult[0] || { total: 0, active: 0, pending: 0, new_registered: 0, last_login: 0, completed: 0, uncompleted: 0 };
 
-      let query = `
+      // 2. Build filtered WHERE clause
+      let filterWhere = baseWhere;
+      let filterParams = [...baseParams];
+
+      if (status === 'Active') {
+        filterWhere += ` AND u.is_active = 1`;
+      } else if (status === 'Pending' || status === 'Disabled') {
+        filterWhere += ` AND (u.is_active = 0 OR u.is_active IS NULL)`;
+      } else if (status === 'Complete' || status === 'Completed') {
+        filterWhere += ` AND u.profile_completion >= 80`;
+      } else if (status === 'Uncompleted' || status === 'Incomplete') {
+        filterWhere += ` AND u.profile_completion < 80`;
+      } else if (status === 'New Registered' || status === 'Recent' || status === 'Recently Registered' || status === 'Registered') {
+        filterWhere += ` AND (${createdDateCond})`;
+        if (startDate && endDate) {
+          filterParams.push(startDate, endDate);
+        } else if (startDate) {
+          filterParams.push(startDate);
+        } else if (endDate) {
+          filterParams.push(endDate);
+        }
+      } else if (status === 'Last Login' || status === 'Login') {
+        filterWhere += ` AND (${lastLoginCond})`;
+        if (startDate && endDate) {
+          filterParams.push(startDate, endDate, startDate, endDate);
+        } else if (startDate) {
+          filterParams.push(startDate, startDate);
+        } else if (endDate) {
+          filterParams.push(endDate, endDate);
+        }
+      }
+
+      // 3. Fast count query (no expensive joins or window functions)
+      let totalCount = 0;
+      if (page && limit) {
+        const countQuery = `SELECT COUNT(*) as total FROM users u ${filterWhere}`;
+        const [countResult] = await pool.query(countQuery, filterParams);
+        totalCount = countResult[0]?.total || 0;
+      }
+
+      // 4. Build dynamic ORDER BY clause
+      const dir = (sortOrder && String(sortOrder).toLowerCase() === 'asc') ? 'ASC' : 'DESC';
+      let orderByClause = ` ORDER BY u.created_date ${dir}, COALESCE(u.last_login, u.created_date) ${dir}, u.id ${dir}`;
+
+      if (sortBy === 'candidate' || sortBy === 'employer') {
+        orderByClause = ` ORDER BY NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), '') ${dir}, u.email ${dir}`;
+      } else if (sortBy === 'education') {
+        orderByClause = ` ORDER BY display_education ${dir}, u.location ${dir}`;
+      } else if (sortBy === 'completion' || sortBy === 'profile_completion') {
+        orderByClause = ` ORDER BY u.profile_completion ${dir}, u.id ${dir}`;
+      } else if (sortBy === 'status') {
+        orderByClause = ` ORDER BY u.is_active ${dir}, u.id ${dir}`;
+      } else if (sortBy === 'last_login' || sortBy === 'last_active') {
+        orderByClause = ` ORDER BY COALESCE(u.last_login, u.created_date) ${dir}, u.id ${dir}`;
+      } else if (sortBy === 'created_date' || sortBy === 'registered_date' || sortBy === 'recent') {
+        orderByClause = ` ORDER BY u.created_date ${dir}, u.id ${dir}`;
+      } else if (status === 'New Registered' || status === 'Recent' || status === 'Recently Registered') {
+        orderByClause = ` ORDER BY u.created_date ${dir}, u.id ${dir}`;
+      } else if (status === 'Last Login' || status === 'Login') {
+        orderByClause = ` ORDER BY COALESCE(u.last_login, u.last_active, u.created_date) ${dir}, u.id ${dir}`;
+      }
+
+      // 5. Paginated user data query
+      let dataQueryParams = [...filterParams];
+      let dataQuery = `
         SELECT 
-          u.*, 
+          u.id, u.role_id, u.first_name, u.last_name, u.phone_code, u.phone, u.email, u.gender,
+          u.is_email_verified, u.profile_image, u.about, u.skills, u.organization, u.user_type,
+          u.class, u.course, u.start_year, u.end_year, u.experince_type, u.total_years, u.total_months,
+          u.location, u.organization_type_id, u.is_active, u.created_date, u.updated_date,
+          u.last_active, u.languages, u.visa_status, u.preferred_job_type, u.dob,
+          u.company_headcount, u.visibility_mode, u.hidden_companies, u.allow_contact, u.show_in_search,
+          u.certifications, u.accomplishments, u.additional_info, u.marital_status, u.notice_period,
+          u.expected_salary, u.available_from, u.preferred_roles, u.preferred_locations,
+          u.willing_to_relocate, u.current_salary, u.career_level, u.headline, u.auto_approve,
+          u.company_id, u.allocated_seats, u.master_recruiter_id, u.last_login,
+          COALESCE(u.profile_completion, 0) AS profile_completion,
+          CASE WHEN u.resume IS NOT NULL AND u.resume != '' AND u.resume != '#' AND u.resume != 'null' AND u.resume != 'Resume' THEN 1 ELSE 0 END AS has_resume,
           r.name AS role_name, 
           ot.name AS organization_type,
           ue.qualification AS education_qualification,
           ue.course AS education_course,
           ue.college AS education_college,
-          ${scoreExpr} AS profile_completion,
           (SELECT COUNT(*) FROM applied_jobs aj WHERE aj.userId = u.id) AS applications_count,
           COALESCE(
             NULLIF(CONCAT_WS(' - ', NULLIF(ue.course, ''), NULLIF(ue.college, '')), ''),
@@ -120,81 +230,24 @@ const UserModel = {
           ) ranked 
           WHERE rn = 1
         ) ue ON u.id = ue.user_id
-        WHERE 1=1
+        ${filterWhere}
+        ${orderByClause}
       `;
-      let queryParams = [];
 
-      if (role) {
-        const rolesArray = String(role).split(',').map(r => r.trim());
-        query += ` AND u.role_id IN (?)`;
-        queryParams.push(rolesArray);
-      }
-
-      if (search) {
-        query += ` AND (u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ?)`;
-        const searchPattern = `%${search}%`;
-        queryParams.push(searchPattern, searchPattern, searchPattern);
-      }
-
-      if (dateCondition) {
-        query += dateCondition;
-        queryParams.push(...dateParams);
-      }
-
-      // If status filter is passed (active/pending/recent/complete/uncompleted)
-      // Note: is_active could be Buffer or TINYINT in DB. Usually '1' for active.
-      if (status === 'Active') {
-        query += ` AND u.is_active = 1`;
-      } else if (status === 'Pending' || status === 'Disabled') {
-        query += ` AND (u.is_active = 0 OR u.is_active IS NULL)`;
-      } else if (status === 'Complete' || status === 'Completed') {
-        query += ` AND ${scoreExpr} >= 80`;
-      } else if (status === 'Uncompleted' || status === 'Incomplete') {
-        query += ` AND ${scoreExpr} < 80`;
-      } else if (status === 'Recent' || status === 'Recently Registered') {
-        query += ` AND u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)`;
-      }
-
-      // Build dynamic ORDER BY clause
-      let orderByClause = " ORDER BY u.created_date DESC, COALESCE(u.last_login, u.created_date) DESC, u.id DESC";
-      const dir = (sortOrder && String(sortOrder).toLowerCase() === 'asc') ? 'ASC' : 'DESC';
-
-      if (sortBy === 'candidate' || sortBy === 'employer') {
-        orderByClause = ` ORDER BY NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), '') ${dir}, u.email ${dir}`;
-      } else if (sortBy === 'education') {
-        orderByClause = ` ORDER BY display_education ${dir}, u.location ${dir}`;
-      } else if (sortBy === 'completion' || sortBy === 'profile_completion') {
-        orderByClause = ` ORDER BY ${scoreExpr} ${dir}, u.id ${dir}`;
-      } else if (sortBy === 'status') {
-        orderByClause = ` ORDER BY u.is_active ${dir}, u.id ${dir}`;
-      } else if (sortBy === 'last_login' || sortBy === 'last_active') {
-        orderByClause = ` ORDER BY COALESCE(u.last_login, u.created_date) ${dir}, u.id ${dir}`;
-      } else if (sortBy === 'created_date' || sortBy === 'registered_date' || sortBy === 'recent') {
-        orderByClause = ` ORDER BY u.created_date ${dir}, u.id ${dir}`;
-      }
-
-      // We need total count for pagination before applying LIMIT
-      let totalCount = 0;
       if (page && limit) {
-        const countQuery = `SELECT COUNT(*) as total FROM (${query}) as subquery`;
-        const [countResult] = await pool.query(countQuery, queryParams);
-        totalCount = countResult[0].total;
-
-        query += orderByClause;
-
         const offset = (parseInt(page) - 1) * parseInt(limit);
-        query += ` LIMIT ? OFFSET ?`;
-        queryParams.push(parseInt(limit), offset);
-      } else {
-        query += orderByClause;
+        dataQuery += ` LIMIT ? OFFSET ?`;
+        dataQueryParams.push(parseInt(limit), offset);
       }
 
-      const [users] = await pool.query(query, queryParams);
+      const [users] = await pool.query(dataQuery, dataQueryParams);
 
       const formattedUsers = users.map(user => ({
         ...user,
+        resume: user.has_resume ? 'Resume' : null,
         last_active: user.last_active || user.updated_date || user.created_date,
         last_login: user.last_login || user.created_date,
+        profile_completion: Number(user.profile_completion || 0),
         skills: (() => {
           try {
             return user.skills ? JSON.parse(user.skills) : [];
@@ -216,7 +269,9 @@ const UserModel = {
             total: stats.total || 0,
             active: stats.active || 0,
             pending: stats.pending || 0,
-            recent: stats.recent || 0,
+            recent: Number(stats.new_registered !== undefined ? stats.new_registered : (stats.recent || 0)),
+            new_registered: Number(stats.new_registered !== undefined ? stats.new_registered : (stats.recent || 0)),
+            last_login: Number(stats.last_login || 0),
             completed: Number(stats.completed || 0),
             uncompleted: Number(stats.uncompleted || 0)
           }
@@ -902,6 +957,7 @@ const UserModel = {
       params.push(uid);
       const query = `UPDATE users SET ${updates.join(", ")} WHERE id = ?`;
       const [result] = await pool.query(query, params);
+      UserModel.recalculateProfileCompletion(uid);
       return result.affectedRows;
     } catch (error) {
       throw new Error(error.message);
@@ -949,6 +1005,7 @@ const UserModel = {
         id,
       ];
       const [result] = await pool.query(updateQuery, params);
+      UserModel.recalculateProfileCompletion(user_id);
       return result.affectedRows;
     } catch (error) {
       throw new Error(error.message);
@@ -1012,6 +1069,7 @@ const UserModel = {
         lateral_entry,
       ];
       const [result] = await pool.query(insertQuery, values);
+      UserModel.recalculateProfileCompletion(user_id);
       return result.affectedRows;
     } catch (error) {
       throw new Error(error.message);

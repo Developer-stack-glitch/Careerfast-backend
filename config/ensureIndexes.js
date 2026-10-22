@@ -22,13 +22,27 @@ async function ensureDatabaseIndexes() {
     }
   };
 
+  const ensureColumn = async (table, col, def) => {
+    try {
+      const [cols] = await pool.query(`SHOW COLUMNS FROM ${table} LIKE ?`, [col]);
+      if (cols.length === 0) {
+        await pool.query(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+        console.log(`⚡ [DB Schema] Added column ${col} to ${table}`);
+      }
+    } catch (err) {
+      console.warn(`⚠️ [DB Schema] Column check ${col} on ${table}:`, err.message);
+    }
+  };
+
   try {
-    // Indexes on `users`
+    // Indexes and columns on `users`
+    await ensureColumn("users", "profile_completion", "INT NOT NULL DEFAULT 0");
     await ensureIndex("users", "idx_users_role_active", "role_id, is_active, created_date");
     await ensureIndex("users", "idx_users_created_date", "created_date");
     await ensureIndex("users", "idx_users_location", "location(50)");
     await ensureIndex("users", "idx_users_gender", "gender(10)");
     await ensureIndex("users", "idx_users_last_login", "last_login");
+    await ensureIndex("users", "idx_users_role_comp", "role_id, profile_completion");
 
     // Indexes on `user_professional`
     await ensureIndex("user_professional", "idx_user_prof_user_del", "user_id, is_deleted");
@@ -55,19 +69,6 @@ async function ensureDatabaseIndexes() {
     } catch (tblErr) {
       console.warn("⚠️ [DB] industry_types check:", tblErr.message);
     }
-
-    // Ensure essential columns across tables
-    const ensureColumn = async (table, col, def) => {
-      try {
-        const [cols] = await pool.query(`SHOW COLUMNS FROM ${table} LIKE ?`, [col]);
-        if (cols.length === 0) {
-          await pool.query(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
-          console.log(`⚡ [DB Schema] Added column ${col} to ${table}`);
-        }
-      } catch (err) {
-        console.warn(`⚠️ [DB Schema] Column check ${col} on ${table}:`, err.message);
-      }
-    };
 
     // users columns
     await ensureColumn("users", "auto_approve", "TINYINT(1) DEFAULT 0");

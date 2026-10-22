@@ -57,98 +57,11 @@ const SupportTicketModel = {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
       `);
 
-      // Check if table is empty to seed initial demo tickets
-      const [rows] = await pool.query(`SELECT COUNT(*) as count FROM support_tickets`);
-      if (rows[0].count === 0) {
-        const demoTickets = [
-          {
-            ticket_number: 'TKT-1009',
-            name: 'Subaash PM',
-            email: 'subaash@gradlearn.in',
-            phone: '+91 9876543219',
-            category: 'Technical Issue',
-            priority: 'Medium',
-            status: 'Closed',
-            user_type: 'recruiter',
-            subject: 'Email notifications not working',
-            description: 'I am not receiving email notifications whenever new applicant resumes arrive for our posted job.',
-            created_at: new Date(Date.now() - 3 * 86400000)
-          },
-          {
-            ticket_number: 'TKT-1006',
-            name: 'Lakshmi B',
-            email: 'lakshmi.b@ptechnosoft.com',
-            phone: '+91 9876543216',
-            category: 'Job Posting',
-            priority: 'High',
-            status: 'Open',
-            user_type: 'recruiter',
-            subject: 'Assistance with Senior Tech Lead job posting review',
-            description: 'My recent job posting for Senior Full Stack Developer was drafted. Could you please clarify what needs to be verified?',
-            created_at: new Date(Date.now() - 1 * 86400000)
-          },
-          {
-            ticket_number: 'TKT-1013',
-            name: 'Demo Testing',
-            email: 'balaji@actetechnologies.com',
-            phone: '+91 9876543213',
-            category: 'Billing & Payment',
-            priority: 'Medium',
-            status: 'In Progress',
-            user_type: 'recruiter',
-            subject: 'Invoice query regarding Enterprise plan renewal',
-            description: 'Could you send the GST-compliant invoice for our quarterly subscription renewal?',
-            created_at: new Date(Date.now() - 2 * 86400000)
-          },
-          {
-            ticket_number: 'TKT-1024',
-            name: 'Santhosh kathirvel',
-            email: 'actewpdeveloper1@gmail.com',
-            phone: '+91 9876543211',
-            category: 'Account & Login',
-            priority: 'Urgent',
-            status: 'Open',
-            user_type: 'candidate',
-            subject: 'Cannot update profile resume file',
-            description: 'I am experiencing an issue while uploading my new PDF resume on candidate dashboard.',
-            created_at: new Date(Date.now() - 2 * 3600000)
-          },
-          {
-            ticket_number: 'TKT-1025',
-            name: 'Santhosh kathirvel',
-            email: 'actewpdeveloper1@gmail.com',
-            phone: '+91 9876543214',
-            category: 'Feature Request',
-            priority: 'Medium',
-            status: 'Closed',
-            user_type: 'candidate',
-            subject: 'Requesting Dark Mode on candidate job search',
-            description: 'It would be great to have dark mode supported across the Candidate Search dashboard for easier night screening.',
-            created_at: new Date(Date.now() - 4 * 3600000)
-          }
-        ];
-
-        for (const t of demoTickets) {
-          const [res] = await pool.query(`
-            INSERT INTO support_tickets 
-            (ticket_number, user_type, name, email, phone, category, priority, status, subject, description, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `, [t.ticket_number, t.user_type, t.name, t.email, t.phone, t.category, t.priority, t.status, t.subject, t.description, t.created_at]);
-
-          // Seed default messages
-          await pool.query(`
-            INSERT INTO ticket_messages (ticket_id, sender, sender_name, text, created_at)
-            VALUES (?, 'User', ?, ?, ?)
-          `, [res.insertId, t.name, t.description, t.created_at]);
-
-          if (t.status !== 'Open') {
-            await pool.query(`
-              INSERT INTO ticket_messages (ticket_id, sender, sender_name, text, created_at)
-              VALUES (?, 'Admin', 'Support Team', 'We have reviewed your request and our team is handling this.', ?)
-            `, [res.insertId, new Date(t.created_at.getTime() + 1800000)]);
-          }
-        }
-        console.log("⚡ [Support Tickets] Initial demo tickets seeded successfully");
+      // Ensure index on created_at exists for fast order by
+      try {
+        await pool.query(`ALTER TABLE support_tickets ADD INDEX idx_ticket_created_at (created_at)`);
+      } catch (idxErr) {
+        // index already exists
       }
     } catch (err) {
       console.warn("⚠️ [Support Tickets] initTable check:", err.message);
@@ -305,43 +218,54 @@ const SupportTicketModel = {
         LIMIT ? OFFSET ?
       `, [...params, parseInt(limit, 10), parseInt(offset, 10)]);
 
-      // Format row objects for frontend
-      const tickets = await Promise.all(rows.map(async (row) => {
-        const [messages] = await pool.query(`
-          SELECT sender, sender_name, text, created_at as time
+      // Batch load ticket messages in ONE single query (no N+1 overhead)
+      const ticketIds = rows.map(r => r.id);
+      const messagesByTicket = {};
+      if (ticketIds.length > 0) {
+        const [allMsgs] = await pool.query(`
+          SELECT ticket_id, sender, sender_name, text, created_at as time
           FROM ticket_messages 
-          WHERE ticket_id = ? 
+          WHERE ticket_id IN (?) 
           ORDER BY created_at ASC
-        `, [row.id]);
+        `, [ticketIds]);
 
-        return {
-          id: row.ticket_number,
-          db_id: row.id,
-          _id: row.id.toString(),
-          ticket_number: row.ticket_number,
-          subject: row.subject,
-          category: row.category,
-          user_type: row.computed_user_type || row.user_type || 'candidate',
-          user: {
-            name: row.name,
-            email: row.email,
-            phone: row.phone,
-            avatar: row.profile_image || null,
-            role_id: row.role_id,
-            organization: row.organization || null
-          },
-          status: row.status,
-          priority: row.priority,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-          description: row.description,
-          messages: messages.map(m => ({
+        for (const m of allMsgs) {
+          if (!messagesByTicket[m.ticket_id]) {
+            messagesByTicket[m.ticket_id] = [];
+          }
+          messagesByTicket[m.ticket_id].push({
             sender: m.sender,
             sender_name: m.sender_name,
             text: m.text,
             time: m.time
-          }))
-        };
+          });
+        }
+      }
+
+      // Format row objects for frontend
+      const tickets = rows.map((row) => ({
+        id: row.ticket_number,
+        db_id: row.id,
+        _id: row.id.toString(),
+        ticket_number: row.ticket_number,
+        subject: row.subject,
+        category: row.category,
+        user_type: row.computed_user_type || row.user_type || 'candidate',
+        user: {
+          name: row.name,
+          email: row.email,
+          phone: row.phone,
+          avatar: row.profile_image || null,
+          role_id: row.role_id,
+          organization: row.organization || null
+        },
+        status: row.status,
+        priority: row.priority,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        description: row.description,
+        message_count: row.message_count || 0,
+        messages: messagesByTicket[row.id] || []
       }));
 
       return {

@@ -10,10 +10,10 @@ const generateOTP = () => {
 };
 
 const transporter = nodemailer.createTransport({
-  service: process.env.SMTP_HOST,
+  service: process.env.SMTP_HOST || "gmail",
   auth: {
-    user: process.env.SMTP_FROM, // Replace with your email
-    pass: process.env.SMTP_PASS, // Replace with your email password or app password for Gmail
+    user: process.env.SMTP_USER || process.env.SMTP_FROM || "careerfastcontact@gmail.com",
+    pass: process.env.SMTP_PASS || "mjzp tqcj gxld yqme",
   },
 });
 
@@ -38,7 +38,7 @@ const sendVerificationEmail = async (email, role_id) => {
 
     const otp = generateOTP();
     const mailOptions = {
-      from: process.env.EMAIL_USER,
+      from: `"CareerFast" <${process.env.SMTP_FROM || process.env.SMTP_USER || process.env.EMAIL_USER || "careerfastcontact@gmail.com"}>`,
       to: email,
       subject: "Your Email Verification OTP",
       text: `Your OTP for email verification is: ${otp}`,
@@ -115,7 +115,7 @@ const VerifyEmail = async (email) => {
   try {
     const otp = generateOTP();
     const mailOptions = {
-      from: process.env.EMAIL_USER,
+      from: `"CareerFast" <${process.env.SMTP_FROM || process.env.SMTP_USER || process.env.EMAIL_USER || "careerfastcontact@gmail.com"}>`,
       to: email,
       subject: "Your Email Verification OTP",
       text: `Your OTP for email verification is: ${otp}`,
@@ -709,7 +709,7 @@ const sendCandidateWelcomeEmail = async ({ email, first_name, last_name }) => {
     `;
 
     const mailOptions = {
-      from: `"CareerFast" <${process.env.SMTP_FROM || process.env.SMTP_USER || "hr@acte.in"}>`,
+      from: `"CareerFast" <${process.env.SMTP_FROM || process.env.SMTP_USER || "careerfastcontact@gmail.com"}>`,
       to: email,
       subject: subject,
       html: htmlContent,
@@ -916,7 +916,7 @@ const sendCandidateDirectEmail = async ({
     `;
 
     const mailOptions = {
-      from: `"${companyName || recruiterName || 'CareerFast'}" <${process.env.SMTP_FROM || 'hr@acte.in'}>`,
+      from: `"${companyName || recruiterName || 'CareerFast'}" <${process.env.SMTP_FROM || process.env.SMTP_USER || 'careerfastcontact@gmail.com'}>`,
       replyTo: recruiterEmail || undefined,
       to: candidateEmail,
       subject: formattedSubject,
@@ -1144,7 +1144,7 @@ const sendRecruiterWelcomeEmail = async ({
     `;
 
     const mailOptions = {
-      from: `"CareerFast Recruiter Portal" <${process.env.SMTP_FROM || 'hr@acte.in'}>`,
+      from: `"CareerFast Recruiter Portal" <${process.env.SMTP_FROM || process.env.SMTP_USER || 'careerfastcontact@gmail.com'}>`,
       to: email,
       subject: subject,
       html: htmlContent,
@@ -1628,7 +1628,7 @@ const sendApplicationConfirmationEmail = async ({
     if (companyLogoAttachment) attachments.push(companyLogoAttachment);
 
     const mailOptions = {
-      from: `"${cleanCompanyName ? `${cleanCompanyName} via CareerFast` : 'CareerFast Applications'}" <${process.env.SMTP_FROM || 'hr@acte.in'}>`,
+      from: `"${cleanCompanyName ? `${cleanCompanyName} via CareerFast` : 'CareerFast Applications'}" <${process.env.SMTP_FROM || process.env.SMTP_USER || 'careerfastcontact@gmail.com'}>`,
       to: candidateEmail,
       subject: subject,
       html: htmlContent,
