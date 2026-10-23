@@ -293,7 +293,8 @@ const UserModel = {
     password,
     organization,
     organization_type_id,
-    role_id
+    role_id,
+    extraData = {}
   ) => {
     try {
       const [isPhoneExists] = await pool.query(
@@ -311,11 +312,12 @@ const UserModel = {
       
       const hashedPassword = await hashPassword(password);
       
-      // Separate recruiter and candidate data
-      const userOrg = role_id == 3 ? null : organization;
-      const userOrgType = role_id == 3 ? null : organization_type_id;
+      // Recruiter and candidate organization data
+      const userOrg = organization || null;
+      const userOrgType = organization_type_id || null;
+      const isVerified = (extraData?.is_email_verified === 1 || extraData?.is_email_verified === true || role_id == 3) ? 1 : 0;
 
-      const query = `INSERT INTO users (first_name, last_name, phone_code, phone, email, password, organization, organization_type_id, role_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      const query = `INSERT INTO users (first_name, last_name, phone_code, phone, email, password, organization, organization_type_id, role_id, is_email_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
       const [user] = await pool.query(query, [
         first_name,
         last_name,
@@ -326,6 +328,7 @@ const UserModel = {
         userOrg,
         userOrgType,
         role_id,
+        isVerified,
       ]);
       
       let result;
@@ -341,11 +344,220 @@ const UserModel = {
             );
             if (orgRows.length > 0) orgTypeName = orgRows[0].name;
           }
-          const [hrRes] = await pool.query(
-            `INSERT INTO hr_profiles (user_id, company_name, organization_type, contact_email, contact_phone) VALUES (?, ?, ?, ?, ?)`,
-            [userId, organization, orgTypeName, email, phone]
-          );
-          const companyId = hrRes.insertId;
+
+          const indType = Array.isArray(extraData?.industries)
+            ? extraData.industries.join(', ')
+            : (extraData?.industries || orgTypeName || null);
+          const mapLoc = [extraData?.address1, extraData?.address2, extraData?.city, extraData?.state, extraData?.country, extraData?.pincode].filter(Boolean).join(', ') || null;
+          const profImg = extraData?.profile_image || null;
+
+          // 1. Sync / Create Company in `companies` table
+          let realCompanyId = null;
+          if (organization && organization.trim()) {
+            try {
+              const compName = organization.trim();
+              const [existingComp] = await pool.query(
+                `SELECT id, name FROM companies WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1`,
+                [compName]
+              );
+              if (existingComp.length > 0) {
+                realCompanyId = existingComp[0].id;
+                await pool.query(
+                  `UPDATE companies SET 
+                    email = COALESCE(NULLIF(email, ''), ?),
+                    phone = COALESCE(NULLIF(phone, ''), ?),
+                    website = COALESCE(NULLIF(website, ''), ?),
+                    city = COALESCE(NULLIF(city, ''), ?),
+                    state = COALESCE(NULLIF(state, ''), ?),
+                    country = COALESCE(NULLIF(country, ''), ?),
+                    pincode = COALESCE(NULLIF(pincode, ''), ?),
+                    address = COALESCE(NULLIF(address, ''), ?),
+                    logo = COALESCE(NULLIF(logo, ''), ?),
+                    industry = COALESCE(NULLIF(industry, ''), ?),
+                    company_type = COALESCE(NULLIF(company_type, ''), ?),
+                    updated_at = NOW()
+                   WHERE id = ?`,
+                  [
+                    email,
+                    phone,
+                    extraData?.website_url || null,
+                    extraData?.city || null,
+                    extraData?.state || null,
+                    extraData?.country || 'India',
+                    extraData?.pincode || null,
+                    [extraData?.address1, extraData?.address2].filter(Boolean).join(', ') || null,
+                    profImg,
+                    indType,
+                    orgTypeName || 'Corporate',
+                    realCompanyId
+                  ]
+                );
+              } else {
+                const [newComp] = await pool.query(
+                  `INSERT INTO companies (
+                    name, email, phone, website, industry, company_type, logo, address, city, state, country, pincode, status, created_at, updated_at
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), NOW())`,
+                  [
+                    compName,
+                    email,
+                    phone,
+                    extraData?.website_url || null,
+                    indType || 'Information Technology',
+                    orgTypeName || 'Corporate',
+                    profImg,
+                    [extraData?.address1, extraData?.address2].filter(Boolean).join(', ') || null,
+                    extraData?.city || null,
+                    extraData?.state || null,
+                    extraData?.country || 'India',
+                    extraData?.pincode || null,
+                  ]
+                );
+                realCompanyId = newComp.insertId;
+              }
+            } catch (compErr) {
+              console.warn("Notice syncing company in companies table:", compErr.message);
+            }
+          }
+
+          // 2. Insert into `hr_profiles` table
+          let companyProfileId = null;
+          try {
+            const [hrRes] = await pool.query(
+              `INSERT INTO hr_profiles (user_id, company_name, organization_type, industry_type, map_location, contact_email, contact_phone, profile_image, website_url, year_established) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [userId, organization, orgTypeName, indType, mapLoc, email, phone, profImg, extraData?.website_url || null, extraData?.year_established || null]
+            );
+            companyProfileId = hrRes.insertId;
+          } catch (hrErr) {
+            console.warn("Notice inserting into hr_profiles:", hrErr.message);
+          }
+
+          // 3. Save recruiter's address into `user_address`
+          if (extraData?.address1 || extraData?.city || extraData?.state || extraData?.pincode) {
+            try {
+              await pool.query(
+                `INSERT INTO user_address (user_id, address1, address2, city, district, state, country, pincode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  userId,
+                  extraData.address1 || '',
+                  extraData.address2 || '',
+                  extraData.city || '',
+                  extraData.city || '',
+                  extraData.state || '',
+                  extraData.country || 'India',
+                  extraData.pincode || '',
+                ]
+              );
+            } catch (addrErr) {
+              console.warn("Notice inserting recruiter address:", addrErr.message);
+            }
+          }
+
+          // 4. Save recruiter's current professional experience into `user_professional`
+          if (extraData?.designation || organization) {
+            try {
+              const skillStr = Array.isArray(extraData?.skills) ? extraData.skills.join(', ') : (extraData?.skills || '');
+              await pool.query(
+                `INSERT INTO user_professional (user_id, job_title, company_name, designation, start_date, end_date, currently_working, skills, location) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+                [
+                  userId,
+                  extraData.designation || 'Recruiter',
+                  organization || '',
+                  extraData.designation || 'Recruiter',
+                  extraData.experience_from || null,
+                  extraData.experience_to || 'Present',
+                  skillStr,
+                  extraData.location || extraData.city || ''
+                ]
+              );
+            } catch (profErr) {
+              console.warn("Notice inserting recruiter current professional experience:", profErr.message);
+            }
+          }
+
+          // 5. Save previous companies if provided into `user_professional`
+          if (Array.isArray(extraData?.previous_companies)) {
+            for (const prev of extraData.previous_companies) {
+              if (prev && (prev.company_name || prev.designation)) {
+                try {
+                  await pool.query(
+                    `INSERT INTO user_professional (user_id, job_title, company_name, designation, start_date, end_date, currently_working, location) VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+                    [
+                      userId,
+                      prev.designation || 'Previous Role',
+                      prev.company_name || '',
+                      prev.designation || 'Previous Role',
+                      prev.from_year || prev.start_date || null,
+                      prev.to_year || prev.end_date || null,
+                      prev.location || ''
+                    ]
+                  );
+                } catch (prevErr) {
+                  console.warn("Notice inserting recruiter previous company:", prevErr.message);
+                }
+              }
+            }
+          }
+
+          // 6. Update user details with all dynamic recruiter fields
+          try {
+            const skillStr = Array.isArray(extraData?.skills) ? extraData.skills.join(', ') : (extraData?.skills || null);
+            const preferredRoles = Array.isArray(extraData?.functions) ? extraData.functions.join(', ') : (extraData?.functions || null);
+            const careerLevel = Array.isArray(extraData?.hiring_levels) ? extraData.hiring_levels.join(', ') : (extraData?.hiring_levels || null);
+
+            const dynamicDetails = {
+              referral_code: extraData?.referral_code || '',
+              industries: extraData?.industries || [],
+              functions: extraData?.functions || [],
+              hiring_levels: extraData?.hiring_levels || [],
+              hiring_experience: extraData?.hiring_experience || '',
+              skills: extraData?.skills || [],
+              previous_companies: extraData?.previous_companies || [],
+              company_address: {
+                address1: extraData?.address1 || '',
+                address2: extraData?.address2 || '',
+                city: extraData?.city || '',
+                state: extraData?.state || '',
+                country: extraData?.country || 'India',
+                pincode: extraData?.pincode || '',
+              },
+              registered_at: new Date().toISOString()
+            };
+
+            await pool.query(
+              `UPDATE users SET 
+                location = ?, 
+                skills = ?, 
+                headline = ?, 
+                total_years = ?, 
+                profile_image = ?, 
+                preferred_roles = ?,
+                career_level = ?,
+                organization = ?,
+                organization_type_id = ?,
+                company_id = ?,
+                additional_info = ?,
+                profile_completion = 100,
+                is_email_verified = 1,
+                is_active = 1
+               WHERE id = ?`,
+              [
+                extraData?.location || extraData?.city || null,
+                skillStr,
+                extraData?.designation || null,
+                extraData?.hiring_experience || null,
+                profImg,
+                preferredRoles,
+                careerLevel,
+                organization || null,
+                organization_type_id || null,
+                realCompanyId || null,
+                JSON.stringify(dynamicDetails),
+                userId
+              ]
+            );
+          } catch (uErr) {
+            console.warn("Notice updating user recruiter extra details:", uErr.message);
+          }
 
           // 🎁 Automatically assign Free Plan (20 jobs/month, 40 total jobs) to newly registered recruiter
           try {
@@ -387,7 +599,7 @@ const UserModel = {
                   recruiter_id, company_id, plan_id, billing_cycle, price_paid,
                   start_date, expiry_date, status, payment_status
                 ) VALUES (?, ?, ?, 'monthly', 0.00, ?, ?, 'Active', 'Paid')`,
-                [userId, companyId || null, freePlan.id, startDate, expiryDate]
+                [userId, realCompanyId || companyProfileId || null, freePlan.id, startDate, expiryDate]
               );
               const subId = subRes.insertId;
 
@@ -413,10 +625,11 @@ const UserModel = {
           }
         }
 
-        result = await pool.query(
-          `SELECT * FROM users WHERE email = ? AND phone_code = ? AND phone = ?`,
-          [email, phone_code, phone]
+        const [rows] = await pool.query(
+          `SELECT * FROM users WHERE id = ?`,
+          [userId]
         );
+        result = rows;
       }
 
       return result;
@@ -1323,32 +1536,66 @@ const UserModel = {
     try {
       const query = `
         SELECT
-          h.profile_image,
+          COALESCE(h.profile_image, u.profile_image) AS profile_image,
           h.banner_image,
-          h.company_name,
+          COALESCE(h.company_name, u.organization) AS company_name,
           h.about_us,
-          h.organization_type,
-          h.industry_type,
+          COALESCE(h.organization_type, ot.name) AS organization_type,
+          COALESCE(h.industry_type, u.preferred_roles) AS industry_type,
           h.team_size,
-          h.year_established,
-          h.website_url,
+          COALESCE(h.year_established, JSON_UNQUOTE(JSON_EXTRACT(u.additional_info, '$.year_established'))) AS year_established,
+          COALESCE(h.website_url, c.website, JSON_UNQUOTE(JSON_EXTRACT(u.additional_info, '$.website_url'))) AS website_url,
           h.vision,
-          h.map_location,
-          h.contact_phone,
-          h.contact_email,
+          COALESCE(h.map_location, ua.address1, u.location) AS map_location,
+          COALESCE(h.contact_phone, u.phone) AS contact_phone,
+          COALESCE(h.contact_email, u.email) AS contact_email,
           CASE WHEN u.is_email_verified = 1 THEN 1 ELSE 0 END AS is_email_verified,
+          u.first_name,
+          u.last_name,
+          u.headline,
+          u.location,
+          u.skills,
+          u.total_years,
+          u.preferred_roles,
+          u.career_level,
+          u.additional_info,
+          u.company_id,
+          ua.address1,
+          ua.address2,
+          ua.city,
+          ua.state,
+          ua.country,
+          ua.pincode,
           s.facebook,
           s.twitter,
           s.instagram,
           s.linkedin as youtube
-        FROM hr_profiles h
-        LEFT JOIN users u ON h.user_id = u.id
-        LEFT JOIN user_social_links s ON h.user_id = s.user_id
-        WHERE h.user_id = ?
+        FROM users u
+        LEFT JOIN hr_profiles h ON h.user_id = u.id
+        LEFT JOIN companies c ON u.company_id = c.id
+        LEFT JOIN organization_type ot ON u.organization_type_id = ot.id
+        LEFT JOIN user_address ua ON u.id = ua.user_id AND (ua.is_deleted = 0 OR ua.is_deleted IS NULL)
+        LEFT JOIN user_social_links s ON u.id = s.user_id
+        WHERE u.id = ?
       `;
       const [rows] = await pool.query(query, [user_id]);
       if (rows && rows.length > 0) {
-        return rows[0];
+        const profile = rows[0];
+        try {
+          const [profRows] = await pool.query(
+            `SELECT id, job_title, company_name, designation, start_date, end_date, currently_working, location, skills 
+             FROM user_professional 
+             WHERE user_id = ? 
+             ORDER BY currently_working DESC, id DESC`,
+            [user_id]
+          );
+          profile.experiences = profRows || [];
+          profile.previous_companies = (profRows || []).filter(p => !p.currently_working);
+          profile.current_experience = (profRows || []).find(p => p.currently_working) || null;
+        } catch (e) {
+          console.warn('user_professional fetch error:', e.message);
+        }
+        return profile;
       }
 
       // Fallback: Check if user belongs to a company or is a team/sub-recruiter linked to an HR profile

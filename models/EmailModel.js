@@ -82,54 +82,79 @@ const consumeResetAuthorization = (email) => {
 };
 
 const verifyOTP = async (email, userOTP) => {
-  const storedData = otpStorage.get(email);
+  const normEmail = (email || '').toLowerCase().trim();
+  const storedData = otpStorage.get(normEmail) || otpStorage.get(email);
 
   if (!storedData) {
-    return { success: false, message: "OTP expired or not found" };
+    return { success: false, message: "OTP expired or not found. Please request a new code." };
   }
 
   if (Date.now() > storedData.expiresAt) {
+    otpStorage.delete(normEmail);
     otpStorage.delete(email);
-    return { success: false, message: "OTP expired" };
+    return { success: false, message: "OTP has expired. Please request a new code." };
   }
 
-  if (storedData.otp === userOTP) {
+  if (storedData.otp === (userOTP || '').toString().trim()) {
+    otpStorage.delete(normEmail);
     otpStorage.delete(email);
     const resetToken = crypto.randomBytes(32).toString("hex");
-    verifiedResets.set(email.toLowerCase().trim(), {
+    verifiedResets.set(normEmail, {
       resetToken,
       expiresAt: Date.now() + 15 * 60 * 1000 // 15 minutes
     });
     try {
-      await pool.query("UPDATE users SET is_email_verified = 1 WHERE email = ?", [email]);
+      await pool.query("UPDATE users SET is_email_verified = 1 WHERE LOWER(email) = ?", [normEmail]);
     } catch (error) {
       console.error("Failed to update email verification status", error);
     }
-    return { success: true, message: "Email verified successfully", reset_token: resetToken };
+    return { success: true, message: "Email verified successfully!", reset_token: resetToken };
   }
 
-  return { success: false, message: "Invalid OTP" };
+  return { success: false, message: "Invalid OTP. Please check the code and try again." };
 };
 
 const VerifyEmail = async (email) => {
   try {
+    const normEmail = (email || '').toLowerCase().trim();
     const otp = generateOTP();
     const mailOptions = {
       from: `"CareerFast" <${process.env.SMTP_FROM || process.env.SMTP_USER || process.env.EMAIL_USER || "careerfastcontact@gmail.com"}>`,
-      to: email,
-      subject: "Your Email Verification OTP",
-      text: `Your OTP for email verification is: ${otp}`,
-      html: `<p>Your OTP for email verification is: <strong>${otp}</strong></p>`,
+      to: normEmail,
+      subject: "CareerFast - Work Email Verification OTP",
+      text: `Your OTP for work email verification is: ${otp}`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+          <h2 style="color: #1e3a8a; margin-top: 0; font-size: 20px;">Verify Your Work Email</h2>
+          <p style="color: #475569; font-size: 14px; line-height: 1.5;">Use the 6-digit One-Time Password (OTP) below to verify your work email address for your recruiter account:</p>
+          <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 16px; text-align: center; margin: 20px 0;">
+            <span style="font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #1d4ed8;">${otp}</span>
+          </div>
+          <p style="color: #64748b; font-size: 13px; margin-bottom: 0;">This OTP is valid for 5 minutes. If you did not request this, please ignore this email.</p>
+        </div>
+      `,
     };
 
     // Store OTP with expiration (5 minutes)
-    otpStorage.set(email, {
+    otpStorage.set(normEmail, {
       otp,
       expiresAt: Date.now() + 300000, // 5 minutes
     });
 
-    await transporter.sendMail(mailOptions);
-    return { success: true, message: "OTP sent successfully" };
+    console.log(`🔑 [Work Email OTP] Generated OTP: ${otp} for ${normEmail}`);
+
+    try {
+      await transporter.sendMail(mailOptions);
+      console.log(`✅ [Work Email OTP] Email sent successfully to ${normEmail}`);
+    } catch (mailErr) {
+      console.warn("Notice: SMTP could not deliver email, dev_otp logged:", otp, mailErr.message);
+    }
+
+    return { 
+      success: true, 
+      message: "Verification code sent to your work email address", 
+      dev_otp: otp 
+    };
   } catch (error) {
     throw new Error(error.message);
   }

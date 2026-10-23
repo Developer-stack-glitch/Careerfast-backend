@@ -93,6 +93,28 @@ const createUser = async (request, response) => {
     }
   }
   try {
+    const extraData = {
+      ...request.body,
+      designation: request.body.designation,
+      location: request.body.location,
+      profile_image: request.body.profile_image,
+      address1: request.body.address1,
+      address2: request.body.address2,
+      city: request.body.city,
+      state: request.body.state,
+      country: request.body.country,
+      pincode: request.body.pincode,
+      experience_from: request.body.experience_from,
+      experience_to: request.body.experience_to,
+      hiring_experience: request.body.hiring_experience,
+      hiring_levels: request.body.hiring_levels,
+      referral_code: request.body.referral_code,
+      industries: request.body.industries,
+      functions: request.body.functions,
+      skills: request.body.skills,
+      previous_companies: request.body.previous_companies,
+    };
+
     const result = await userModel.createUser(
       first_name,
       last_name,
@@ -102,7 +124,8 @@ const createUser = async (request, response) => {
       password,
       organization,
       organization_type_id,
-      role_id
+      role_id,
+      extraData
     );
 
     // If candidate registered (role_id 2 or not 3), trigger welcome email notification with professional UI
@@ -117,12 +140,20 @@ const createUser = async (request, response) => {
     }
 
     response.status(201).json({
+      success: true,
       message: "User created successfully",
       data: result,
     });
   } catch (error) {
-    response.status(500).json({
-      message: "Error creating user",
+    console.error("❌ Error in createUser:", error?.message || error);
+    const isConflict = error.message && (
+      error.message.toLowerCase().includes("already exists") ||
+      error.message.toLowerCase().includes("duplicate") ||
+      error.message.toLowerCase().includes("not allowed")
+    );
+    response.status(isConflict ? 400 : 500).json({
+      success: false,
+      message: error.message || "Error creating user",
       details: error.message,
     });
   }

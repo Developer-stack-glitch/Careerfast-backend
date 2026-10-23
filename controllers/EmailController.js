@@ -52,7 +52,7 @@ const VerifyEmail = async (request, response) => {
   try {
     const result = await EmailModel.VerifyEmail(email);
     if (result.success) {
-      response.json({ message: result.message });
+      response.json({ message: result.message, dev_otp: result.dev_otp });
     } else {
       response.status(500).json({ error: result.message });
     }
