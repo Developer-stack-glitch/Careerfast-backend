@@ -854,6 +854,21 @@ const getJobCategories = async (request, response) => {
   }
 };
 
+const getSalaryRanges = async (request, response) => {
+  try {
+    const data = await JobsModel.getSalaryRangeCounts();
+    response.status(200).send({
+      message: "Salary ranges fetched successfully",
+      data: data,
+    });
+  } catch (error) {
+    response.status(500).send({
+      message: "Error fetching salary ranges",
+      details: error.message,
+    });
+  }
+};
+
 const getJobPosts = async (request, response) => {
   const body = request.body;
   const filters = {
@@ -867,8 +882,14 @@ const getJobPosts = async (request, response) => {
   if (body.status) filters.status = body.status;
   if (body.working_days) filters.working_days = body.working_days;
   if (body.salary_sort) filters.salary_sort = body.salary_sort;
+  if (Array.isArray(body.salary_ranges) && body.salary_ranges.length > 0) {
+    filters.salary_ranges = body.salary_ranges;
+  } else if (body.salary_ranges) {
+    filters.salary_ranges = [body.salary_ranges];
+  }
   if (body.start_date) filters.start_date = body.start_date;
   if (body.end_date) filters.end_date = body.end_date;
+  if (body.freshness) filters.freshness = body.freshness;
   if (Array.isArray(body.workplace_type) && body.workplace_type.length > 0) filters.workplace_type = body.workplace_type;
   if (Array.isArray(body.work_location) && body.work_location.length > 0) filters.work_location = body.work_location;
   if (Array.isArray(body.job_categories) && body.job_categories.length > 0) filters.job_categories = body.job_categories;
@@ -901,6 +922,7 @@ const getJobPosts = async (request, response) => {
   }
 
   // Sorting
+  if (body.sort_by) filters.sort_by = body.sort_by;
   if (body.sort_key) filters.sort_key = body.sort_key;
   if (body.sort_direction) filters.sort_direction = body.sort_direction;
 
@@ -1622,6 +1644,21 @@ const getLocations = async (request, response) => {
   } catch (error) {
     response.status(500).json({
       message: "Error while fetching location",
+      details: error.message,
+    });
+  }
+};
+
+const getLocationCounts = async (request, response) => {
+  try {
+    const counts = await JobsModel.getLocationCounts();
+    response.status(200).send({
+      message: "Location counts fetched successfully",
+      data: counts,
+    });
+  } catch (error) {
+    response.status(500).json({
+      message: "Error while fetching location counts",
       details: error.message,
     });
   }
@@ -2648,6 +2685,7 @@ module.exports = {
   getYears,
   getSkills,
   getJobCategories,
+  getSalaryRanges,
   getJobPosts,
   registrationClose,
   getExperienceRange,
@@ -2698,4 +2736,5 @@ module.exports = {
   makeJobActive,
   deleteJobPost,
   handleCandidateApplicationConfirmation,
+  getLocationCounts,
 };

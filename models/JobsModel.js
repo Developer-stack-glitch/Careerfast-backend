@@ -26,6 +26,9 @@ const JOB_POSTS_CACHE_TTL = 60 * 1000; // 60s
 const adminStatsCache = new Map();
 const ADMIN_STATS_CACHE_TTL = 30 * 1000; // 30s cache for admin stats to make tab switches and pagination instant
 
+let locationCountsCache = null;
+let locationCountsCacheTime = 0;
+
 const clearAdminStatsCache = () => {
   adminStatsCache.clear();
 };
@@ -171,6 +174,42 @@ const JobsModel = {
       return salaryType;
     } catch (error) {
       throw new Error(error.message);
+    }
+  },
+
+  getSalaryRangeCounts: async () => {
+    try {
+      const q = `SELECT 
+        COUNT(CASE WHEN ((min_salary >= 0 AND min_salary < 300000) OR (max_salary > 0 AND max_salary <= 300000) OR (min_salary <= 0 AND max_salary >= 300000)) THEN 1 END) as c1,
+        COUNT(CASE WHEN ((min_salary >= 300000 AND min_salary < 600000) OR (max_salary > 300000 AND max_salary <= 600000) OR (min_salary <= 300000 AND max_salary >= 600000)) THEN 1 END) as c2,
+        COUNT(CASE WHEN ((min_salary >= 600000 AND min_salary < 1000000) OR (max_salary > 600000 AND max_salary <= 1000000) OR (min_salary <= 600000 AND max_salary >= 1000000)) THEN 1 END) as c3,
+        COUNT(CASE WHEN ((min_salary >= 1000000 AND min_salary < 1500000) OR (max_salary > 1000000 AND max_salary <= 1500000) OR (min_salary <= 1000000 AND max_salary >= 1500000)) THEN 1 END) as c4,
+        COUNT(CASE WHEN ((min_salary >= 1500000 AND min_salary < 2500000) OR (max_salary > 1500000 AND max_salary <= 2500000) OR (min_salary <= 1500000 AND max_salary >= 2500000)) THEN 1 END) as c5,
+        COUNT(CASE WHEN ((min_salary >= 2500000 AND min_salary < 5000000) OR (max_salary > 2500000 AND max_salary <= 5000000) OR (min_salary <= 2500000 AND max_salary >= 5000000)) THEN 1 END) as c6,
+        COUNT(CASE WHEN ((min_salary >= 5000000 AND min_salary < 7500000) OR (max_salary > 5000000 AND max_salary <= 7500000) OR (min_salary <= 5000000 AND max_salary >= 7500000)) THEN 1 END) as c7,
+        COUNT(CASE WHEN ((min_salary >= 7500000 AND min_salary < 10000000) OR (max_salary > 7500000 AND max_salary <= 10000000) OR (min_salary <= 7500000 AND max_salary >= 10000000)) THEN 1 END) as c8,
+        COUNT(CASE WHEN ((min_salary >= 10000000 AND min_salary < 50000000) OR (max_salary > 10000000 AND max_salary <= 50000000) OR (min_salary <= 10000000 AND max_salary >= 50000000)) THEN 1 END) as c9
+      FROM job_post
+      WHERE (is_closed = 0 OR is_closed IS NULL)
+        AND (approval_status = 'approved' OR approval_status IS NULL)`;
+
+      const [rows] = await pool.query(q);
+      const r = rows[0] || {};
+
+      return [
+        { label: '0-3 Lakhs', value: '0-3 Lakhs', count: r.c1 || 0 },
+        { label: '3-6 Lakhs', value: '3-6 Lakhs', count: r.c2 || 0 },
+        { label: '6-10 Lakhs', value: '6-10 Lakhs', count: r.c3 || 0 },
+        { label: '10-15 Lakhs', value: '10-15 Lakhs', count: r.c4 || 0 },
+        { label: '15-25 Lakhs', value: '15-25 Lakhs', count: r.c5 || 0 },
+        { label: '25-50 Lakhs', value: '25-50 Lakhs', count: r.c6 || 0 },
+        { label: '50-75 Lakhs', value: '50-75 Lakhs', count: r.c7 || 0 },
+        { label: '75-100 Lakhs', value: '75-100 Lakhs', count: r.c8 || 0 },
+        { label: '1-5 Cr', value: '1-5 Cr', count: r.c9 || 0 },
+      ];
+    } catch (error) {
+      console.error("Error in getSalaryRangeCounts:", error);
+      throw error;
     }
   },
 
@@ -1381,6 +1420,38 @@ const JobsModel = {
         queryParams.push(filters.working_days);
       }
 
+      // Salary ranges filter
+      if (filters.salary_ranges && filters.salary_ranges.length > 0) {
+        const SALARY_RANGE_MAP = {
+          '0-3 Lakhs': { min: 0, max: 300000 },
+          '3-6 Lakhs': { min: 300000, max: 600000 },
+          '6-10 Lakhs': { min: 600000, max: 1000000 },
+          '10-15 Lakhs': { min: 1000000, max: 1500000 },
+          '15-25 Lakhs': { min: 1500000, max: 2500000 },
+          '25-50 Lakhs': { min: 2500000, max: 5000000 },
+          '50-75 Lakhs': { min: 5000000, max: 7500000 },
+          '75-100 Lakhs': { min: 7500000, max: 10000000 },
+          '1-5 Cr': { min: 10000000, max: 50000000 },
+        };
+
+        const rangeClauses = [];
+        filters.salary_ranges.forEach((rangeLabel) => {
+          const matched = SALARY_RANGE_MAP[rangeLabel];
+          if (matched) {
+            rangeClauses.push(`(
+              (COALESCE(job_post.min_salary, 0) >= ? AND COALESCE(job_post.min_salary, 0) < ?)
+              OR (COALESCE(job_post.max_salary, 0) > ? AND COALESCE(job_post.max_salary, 0) <= ?)
+              OR (COALESCE(job_post.min_salary, 0) <= ? AND COALESCE(job_post.max_salary, 0) >= ?)
+            )`);
+            queryParams.push(matched.min, matched.max, matched.min, matched.max, matched.min, matched.max);
+          }
+        });
+
+        if (rangeClauses.length > 0) {
+          whereClauses.push(`(${rangeClauses.join(" OR ")})`);
+        }
+      }
+
       // Date range filter
       if (filters.start_date && filters.end_date) {
         whereClauses.push(`DATE(job_post.created_at) BETWEEN ? AND ?`);
@@ -1391,6 +1462,15 @@ const JobsModel = {
       } else if (filters.end_date) {
         whereClauses.push(`DATE(job_post.created_at) <= ?`);
         queryParams.push(filters.end_date);
+      }
+
+      // Freshness filter (e.g. 1, 3, 7, 15, 30 days)
+      if (filters.freshness) {
+        const days = parseInt(String(filters.freshness).replace(/\D/g, ''), 10);
+        if (!isNaN(days) && days > 0) {
+          whereClauses.push(`job_post.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`);
+          queryParams.push(days);
+        }
       }
 
       // Job category filter (array of categories)
@@ -1464,17 +1544,25 @@ const JobsModel = {
         'is_closed': 'job_post.is_closed',
       };
       let orderClause = "";
-      if (filters.sort_key && ALLOWED_SORT_KEYS[filters.sort_key]) {
+      const sortBy = filters.sort_by ? String(filters.sort_by).toLowerCase() : null;
+
+      if (sortBy === 'date') {
+        orderClause = ` ORDER BY job_post.created_at DESC, job_post.id DESC`;
+      } else if (sortBy === 'relevance') {
+        orderClause = ` ORDER BY (SELECT COUNT(*) FROM applied_jobs WHERE applied_jobs.postId = job_post.id) DESC, COALESCE(job_post.views_count, 0) DESC, job_post.created_at DESC, job_post.id DESC`;
+      } else if (sortBy === 'recommended') {
+        orderClause = ` ORDER BY CASE WHEN job_post.company_logo IS NOT NULL AND job_post.company_logo != '' AND job_post.company_logo NOT LIKE '%dummy_img%' THEN 0 ELSE 1 END, CASE WHEN (COALESCE(job_post.min_salary, 0) > 0 OR COALESCE(job_post.max_salary, 0) > 0) THEN 0 ELSE 1 END, job_post.created_at DESC, job_post.id DESC`;
+      } else if (filters.sort_key && ALLOWED_SORT_KEYS[filters.sort_key]) {
         const dir = filters.sort_direction === 'desc' ? 'DESC' : 'ASC';
-        orderClause = ` ORDER BY ${ALLOWED_SORT_KEYS[filters.sort_key]} ${dir}`;
+        orderClause = ` ORDER BY ${ALLOWED_SORT_KEYS[filters.sort_key]} ${dir}, job_post.id DESC`;
       } else if (filters.salary_sort) {
-        if (filters.salary_sort === "low_to_high") {
-          orderClause = ` ORDER BY COALESCE(job_post.min_salary, 0) ASC`;
-        } else if (filters.salary_sort === "high_to_low") {
-          orderClause = ` ORDER BY COALESCE(job_post.max_salary, 0) DESC`;
+        if (filters.salary_sort === "low_to_high" || filters.salary_sort === "lowToHigh") {
+          orderClause = ` ORDER BY COALESCE(job_post.min_salary, 0) ASC, job_post.id DESC`;
+        } else if (filters.salary_sort === "high_to_low" || filters.salary_sort === "highToLow") {
+          orderClause = ` ORDER BY COALESCE(job_post.max_salary, 0) DESC, job_post.id DESC`;
         }
       } else {
-        orderClause = ` ORDER BY job_post.created_at DESC`;
+        orderClause = ` ORDER BY CASE WHEN job_post.company_logo IS NOT NULL AND job_post.company_logo != '' AND job_post.company_logo NOT LIKE '%dummy_img%' THEN 0 ELSE 1 END, CASE WHEN (COALESCE(job_post.min_salary, 0) > 0 OR COALESCE(job_post.max_salary, 0) > 0) THEN 0 ELSE 1 END, job_post.created_at DESC, job_post.id DESC`;
       }
 
       // Apply pagination with LIMIT and OFFSET
@@ -1505,8 +1593,8 @@ const JobsModel = {
       if (idRows.length > 0) {
         const postIds = idRows.map(r => r.id);
         const placeholders = postIds.map(() => '?').join(',');
-        const fullQuery = `${query} WHERE job_post.id IN (${placeholders}) ${orderClause}`;
-        const [fullPosts] = await pool.query(fullQuery, postIds);
+        const fullQuery = `${query} WHERE job_post.id IN (${placeholders}) ORDER BY FIELD(job_post.id, ${placeholders})`;
+        const [fullPosts] = await pool.query(fullQuery, [...postIds, ...postIds]);
         posts = fullPosts;
       }
 
@@ -3845,6 +3933,49 @@ const JobsModel = {
       return result;
     } catch (error) {
       throw new Error(error.message);
+    }
+  },
+
+  getLocationCounts: async () => {
+    try {
+      const now = Date.now();
+      if (locationCountsCache && (now - locationCountsCacheTime < 60 * 1000)) {
+        return locationCountsCache;
+      }
+
+      const [rows] = await pool.query(
+        "SELECT work_location FROM job_post WHERE (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'"
+      );
+
+      const counts = {};
+      for (const r of rows) {
+        if (!r.work_location) continue;
+        let locs = [];
+        try {
+          locs = typeof r.work_location === 'string' ? JSON.parse(r.work_location) : r.work_location;
+        } catch {
+          locs = [r.work_location];
+        }
+        if (Array.isArray(locs)) {
+          const seen = new Set();
+          for (const loc of locs) {
+            if (!loc) continue;
+            const trimmed = String(loc).trim();
+            const lower = trimmed.toLowerCase();
+            if (!seen.has(lower)) {
+              seen.add(lower);
+              counts[lower] = (counts[lower] || 0) + 1;
+            }
+          }
+        }
+      }
+
+      locationCountsCache = counts;
+      locationCountsCacheTime = now;
+      return counts;
+    } catch (error) {
+      console.error("Error in getLocationCounts:", error);
+      return {};
     }
   },
 

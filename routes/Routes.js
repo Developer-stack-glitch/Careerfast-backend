@@ -246,6 +246,8 @@ router.put("/rejectJob/:id", verifyToken, JobsController.rejectJob);
 router.get("/getYears", JobsController.getYears);
 router.get("/getSkills", JobsController.getSkills);
 router.get("/getJobCategories", JobsController.getJobCategories);
+router.get("/getSalaryRanges", JobsController.getSalaryRanges);
+router.get("/getLocationCounts", JobsController.getLocationCounts);
 
 // Email verification
 router.post("/sendOTP", EmailController.sendVerificationEmail);
