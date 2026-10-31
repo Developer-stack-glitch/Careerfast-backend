@@ -2385,7 +2385,8 @@ const batchEnrichJobsWithRecruiterInfo = async (rawList) => {
       if (isSuperAdmin) {
         return {
           ...job,
-          recruiter_name: fullName || job.recruiter_name,
+          recruiter_name: (job.recruiter_name && job.recruiter_name.trim()) ? job.recruiter_name : (fullName || job.recruiter_name),
+          posted_by_name: fullName || job.recruiter_name,
           recruiter_email: user?.email,
           recruiter_plan_name: 'Admin',
           recruiter_active_limit: 0,
@@ -2402,7 +2403,8 @@ const batchEnrichJobsWithRecruiterInfo = async (rawList) => {
 
       return {
         ...job,
-        recruiter_name: fullName || job.recruiter_name,
+        recruiter_name: (job.recruiter_name && job.recruiter_name.trim()) ? job.recruiter_name : (fullName || job.recruiter_name),
+          posted_by_name: fullName || job.recruiter_name,
         recruiter_email: user?.email,
         recruiter_plan_name: planName,
         recruiter_active_limit: activeLimit,
