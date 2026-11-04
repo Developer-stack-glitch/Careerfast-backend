@@ -327,15 +327,17 @@ const CandidateSearchModel = {
       }
 
       // Active / Updated within days
-      if (activeUpdated) {
+      if (activeUpdated && activeUpdated !== 'All time' && activeUpdated !== 'all') {
         let days = parseInt(activeUpdated, 10);
-        if (isNaN(days)) {
-          const str = String(activeUpdated).toLowerCase();
-          if (str.includes('7')) days = 7;
-          else if (str.includes('15')) days = 15;
-          else if (str.includes('1 month') || str.includes('30')) days = 30;
-          else if (str.includes('3 month') || str.includes('90')) days = 90;
-          else if (str.includes('6 month') || str.includes('180')) days = 180;
+        if (isNaN(days) || String(activeUpdated).includes('month') || String(activeUpdated).includes('day')) {
+          const str = String(activeUpdated).toLowerCase().trim();
+          if (str.includes('3 day') || str === '3' || str.startsWith('3d')) days = 3;
+          else if (str.includes('7 day') || str === '7' || str.startsWith('7d')) days = 7;
+          else if (str.includes('15 day') || str === '15' || str.startsWith('15d')) days = 15;
+          else if (str.includes('30 day') || str.includes('1 month') || str === '30') days = 30;
+          else if (str.includes('2 month') || str.includes('60 day') || str === '60') days = 60;
+          else if (str.includes('3 month') || str.includes('90 day') || str === '90') days = 90;
+          else if (str.includes('6 month') || str.includes('180 day') || str === '180') days = 180;
           else if (str.includes('12 month') || str.includes('1 year') || str.includes('365')) days = 365;
         }
 

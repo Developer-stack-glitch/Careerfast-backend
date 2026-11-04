@@ -20,6 +20,7 @@ const RecruiterManagementController = require("../controllers/RecruiterManagemen
 const RecruiterSubscriptionController = require("../controllers/RecruiterSubscriptionController");
 const SubRecruiterController = require("../controllers/SubRecruiterController");
 const LocationController = require("../controllers/LocationController");
+const NvitesController = require("../controllers/NvitesController");
 const authRoutes = require("./auth");
 const tokenRoutes = require("./tokenRoutes");
 const eventRoutes = require("./eventRoutes");
@@ -123,6 +124,18 @@ router.post("/recruiter/subscription/consume-download", verifyToken, RecruiterSu
 router.post("/recruiter/subscription/consume-excel-download", verifyToken, RecruiterSubscriptionController.consumeExcelDownload);
 router.post("/recruiter/candidates/send-email", verifyToken, RecruiterSubscriptionController.sendCandidateEmail);
 router.post("/recruiter/candidates/record-whatsapp", verifyToken, RecruiterSubscriptionController.recordCandidateWhatsApp);
+
+// ==========================================
+// ⚡ Naukri-style Nvites (Job Invitations) APIs
+// ==========================================
+router.post("/nvites/send", verifyToken, NvitesController.sendNvites);
+router.get("/nvites/recruiter", verifyToken, NvitesController.getRecruiterNvites);
+router.get("/nvites/candidate", verifyToken, NvitesController.getCandidateNvites);
+router.post("/nvites/:id/view", verifyToken, NvitesController.markNviteViewed);
+router.post("/nvites/:id/accept", verifyToken, NvitesController.acceptNvite);
+router.post("/nvites/:id/decline", verifyToken, NvitesController.declineNvite);
+router.post("/nvites/:id/resend", verifyToken, NvitesController.resendNvite);
+
 
 // User module APIs
 router.get("/getUsers", userController.getUsers);

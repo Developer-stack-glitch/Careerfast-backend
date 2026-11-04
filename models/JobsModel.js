@@ -2887,8 +2887,11 @@ const JobsModel = {
           const locations = typeof post.work_location === 'string' ? JSON.parse(post.work_location) : post.work_location;
           if (Array.isArray(locations)) {
             locations.forEach(loc => {
-              if (loc) {
-                locationCounts[loc] = (locationCounts[loc] || 0) + 1;
+              if (loc && typeof loc === 'string') {
+                const cleanLoc = loc.trim();
+                if (cleanLoc) {
+                  locationCounts[cleanLoc] = (locationCounts[cleanLoc] || 0) + 1;
+                }
               }
             });
           }
@@ -2899,8 +2902,8 @@ const JobsModel = {
 
       const trendingLocations = Object.entries(locationCounts)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 2)
-        .map(([location, count]) => ({ location, count }));
+        .slice(0, 3)
+        .map(([location, count]) => ({ location: location.trim(), count }));
 
       // Get all categories for 'Internship'
       const [internshipPosts] = await pool.query(
@@ -2913,8 +2916,11 @@ const JobsModel = {
           const categories = typeof post.job_category === 'string' ? JSON.parse(post.job_category) : post.job_category;
           if (Array.isArray(categories)) {
             categories.forEach(cat => {
-              if (cat) {
-                categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+              if (cat && typeof cat === 'string') {
+                const cleanCat = cat.trim();
+                if (cleanCat) {
+                  categoryCounts[cleanCat] = (categoryCounts[cleanCat] || 0) + 1;
+                }
               }
             });
           }
@@ -2925,14 +2931,16 @@ const JobsModel = {
 
       const trendingCategories = Object.entries(categoryCounts)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 2)
-        .map(([category, count]) => ({ category, count }));
+        .slice(0, 3)
+        .map(([category, count]) => ({ category: category.trim(), count }));
 
       const trending = [];
 
       trendingLocations.forEach(item => {
         trending.push({
           label: `jobs, ${item.location}`,
+          location: item.location,
+          job_nature: 'Job',
           count: item.count,
           isNew: true
         });
@@ -2941,6 +2949,8 @@ const JobsModel = {
       trendingCategories.forEach(item => {
         trending.push({
           label: `internship, ${item.category}`,
+          category: item.category,
+          job_nature: 'Internship',
           count: item.count,
           isNew: true
         });

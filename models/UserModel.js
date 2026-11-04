@@ -18,7 +18,8 @@ const UserModel = {
           (CASE WHEN ue.user_id IS NOT NULL OR NULLIF(u.course, '') IS NOT NULL OR NULLIF(u.class, '') IS NOT NULL THEN 15 ELSE 0 END) +
           (CASE WHEN u.skills IS NOT NULL AND u.skills != '' AND u.skills != '[]' AND u.skills != 'null' THEN 10 ELSE 0 END) +
           (CASE WHEN u.resume IS NOT NULL AND u.resume != '' AND u.resume != '#' AND u.resume != 'null' AND u.resume != 'Resume' THEN 10 ELSE 0 END)
-        )
+        ),
+        u.updated_date = CURRENT_TIMESTAMP
         WHERE u.id = ?
       `, [userId, userId]);
     } catch (e) {
@@ -1350,6 +1351,7 @@ const UserModel = {
                         u.career_level,
                         u.headline,
                         u.created_date,
+                        COALESCE(u.updated_date, u.last_active, u.created_date) AS updated_date,
                         COALESCE(u.last_active, (SELECT MAX(created_at) FROM user_daily_usage WHERE user_id = u.id), u.updated_date, u.created_date) AS last_active,
                         ot.name AS organization_type
                     FROM
@@ -1497,7 +1499,7 @@ const UserModel = {
 
         return {
           ...row,
-          skills: row.skills ? (typeof row.skills === 'string' ? JSON.parse(row.skills) : row.skills) : [],
+          skills: row.skills ? (typeof row.skills === 'string' ? (() => { try { const p = JSON.parse(row.skills); return Array.isArray(p) ? p : [p]; } catch (e) { return row.skills.split(',').map(s => s.trim()).filter(Boolean); } })() : row.skills) : [],
           certifications: Array.isArray(certifications) ? certifications : [],
           accomplishments: Array.isArray(accomplishments) ? accomplishments : [],
           additional_info: additionalInfo || {},
@@ -1514,7 +1516,7 @@ const UserModel = {
       const getProfessional = rows.map((row) => {
         return {
           ...row,
-          skills: row.skills ? (typeof row.skills === 'string' ? JSON.parse(row.skills) : row.skills) : [],
+          skills: row.skills ? (typeof row.skills === 'string' ? (() => { try { const p = JSON.parse(row.skills); return Array.isArray(p) ? p : [p]; } catch (e) { return row.skills.split(',').map(s => s.trim()).filter(Boolean); } })() : row.skills) : [],
         };
       });
 
