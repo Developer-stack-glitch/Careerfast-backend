@@ -493,9 +493,31 @@ const jobPosting = async (request, response) => {
       await SubRecruiterModel.incrementSubRecruiterUsage(recruiterUserId, 'job_post');
     }
 
-    // Auto Approve Logic
-    const [userRows] = await pool.query(`SELECT auto_approve, role_id FROM users WHERE id = ?`, [effectiveRecruiterId || user_id]);
-    const isAutoApprove = userRows[0]?.auto_approve === 1 || userRows[0]?.role_id === 1; // superadmins also auto-approve
+    // Auto Approve Logic (Checks user, master recruiter, and parent company)
+    const postingUserId = recruiterUserId || user_id;
+    const [userRows] = await pool.query(
+      `SELECT u.auto_approve, u.role_id, u.company_id, u.organization, u.master_recruiter_id,
+              c.auto_approve AS company_auto_approve,
+              mu.auto_approve AS master_auto_approve
+       FROM users u
+       LEFT JOIN companies c ON (u.company_id = c.id OR (u.organization IS NOT NULL AND u.organization != '' AND c.name = u.organization))
+       LEFT JOIN users mu ON u.master_recruiter_id = mu.id
+       WHERE u.id = ?`,
+      [postingUserId]
+    );
+
+    const uRecord = userRows[0] || {};
+    let isAutoApprove = uRecord.auto_approve === 1 ||
+                        uRecord.role_id === 1 ||
+                        uRecord.company_auto_approve === 1 ||
+                        uRecord.master_auto_approve === 1;
+
+    if (!isAutoApprove && effectiveRecruiterId && effectiveRecruiterId !== postingUserId) {
+      const [effRows] = await pool.query(`SELECT auto_approve, role_id FROM users WHERE id = ?`, [effectiveRecruiterId]);
+      if (effRows[0]?.auto_approve === 1 || effRows[0]?.role_id === 1) {
+        isAutoApprove = true;
+      }
+    }
 
     const insertedJobId = result?.insertId || (typeof result === 'number' ? result : null);
     if (isAutoApprove && insertedJobId) {

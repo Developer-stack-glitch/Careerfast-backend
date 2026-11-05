@@ -61,7 +61,7 @@ const RecruiterManagementModel = {
           COALESCE(sp.resume_download_limit, 0) AS resume_download_limit,
           COALESCE(sp.featured_job_limit, 0) AS featured_job_limit,
           COALESCE(sp.urgent_job_limit, 0) AS urgent_job_limit,
-          COALESCE(NULLIF(u.allocated_seats, 0), sp.sub_recruiter_limit, 1) AS sub_recruiter_limit,
+          COALESCE(c.total_sub_recruiter_seats, sp.sub_recruiter_limit, NULLIF(u.allocated_seats, 0), 1) AS sub_recruiter_limit,
           COALESCE(sp.email_limit, 0) AS email_limit,
           COALESCE(sp.whatsapp_limit, 0) AS whatsapp_limit,
           COALESCE(sp.excel_download_limit, 0) AS excel_download_limit,
@@ -264,7 +264,7 @@ const RecruiterManagementModel = {
           COALESCE(sp.resume_download_limit, 0) AS resume_download_limit,
           COALESCE(sp.featured_job_limit, 0) AS featured_job_limit,
           COALESCE(sp.urgent_job_limit, 0) AS urgent_job_limit,
-          COALESCE(NULLIF(u.allocated_seats, 0), sp.sub_recruiter_limit, 1) AS sub_recruiter_limit,
+          COALESCE(c.total_sub_recruiter_seats, sp.sub_recruiter_limit, NULLIF(u.allocated_seats, 0), 1) AS sub_recruiter_limit,
           COALESCE(sp.email_limit, 0) AS email_limit,
           COALESCE(sp.whatsapp_limit, 0) AS whatsapp_limit,
           COALESCE(sp.excel_download_limit, 0) AS excel_download_limit,
@@ -382,6 +382,7 @@ const RecruiterManagementModel = {
                 u2.email, u2.phone, CAST(u2.is_active AS UNSIGNED) AS is_active,
                 u2.created_date, COALESCE(u2.last_active, u2.updated_date, u2.created_date) AS last_active,
                 COALESCE(u2.allocated_seats, 0) AS allocated_seats,
+                COALESCE(u2.auto_approve, 0) AS auto_approve,
                 (SELECT COUNT(*) FROM sub_recruiters sr WHERE sr.main_recruiter_id = u2.id) AS sub_recruiters_count
          FROM users u2
          LEFT JOIN recruiter_subscriptions rs2 ON u2.id = rs2.recruiter_id AND rs2.id = (
@@ -1050,6 +1051,11 @@ const RecruiterManagementModel = {
 
       let customPlanId;
 
+      const sRecLimit = limits.total_sub_recruiter_seats !== undefined
+        ? Math.max(0, Number(limits.total_sub_recruiter_seats) || 0)
+        : (limits.sub_recruiter_limit !== undefined ? Math.max(0, Number(limits.sub_recruiter_limit) || 0) : 1);
+      const mLoginLimit = limits.master_login_limit !== undefined ? Math.max(1, Number(limits.master_login_limit) || 1) : 1;
+
       if ((currentSub.plan_type === 'Custom' || currentSub.plan_name?.toLowerCase().includes('custom') || currentSub.plan_name?.toLowerCase().includes('only job post')) && currentSub.plan_id) {
         // Update the existing custom plan limits and name
         await connection.query(
@@ -1079,8 +1085,8 @@ const RecruiterManagementModel = {
             limits.urgent_job_limit || 0,
             limits.resume_view_limit || 0,
             limits.resume_download_limit || 0,
-            limits.sub_recruiter_limit || 1,
-            limits.master_login_limit !== undefined ? (Number(limits.master_login_limit) || 1) : 1,
+            sRecLimit,
+            mLoginLimit,
             limits.email_sent_count !== undefined ? (Number(limits.email_sent_count) || 0) : (Number(limits.email_limit) || 0),
             limits.whatsapp_message_count !== undefined ? (Number(limits.whatsapp_message_count) || 0) : (limits.whatsapp_sent_count !== undefined ? (Number(limits.whatsapp_sent_count) || 0) : (Number(limits.whatsapp_limit) || 0)),
             limits.excel_download_count !== undefined ? (Number(limits.excel_download_count) || 0) : (limits.excel_downloads_limit !== undefined ? (Number(limits.excel_downloads_limit) || 0) : (Number(limits.excel_download_limit) || 0)),
@@ -1105,8 +1111,8 @@ const RecruiterManagementModel = {
           limits.urgent_job_limit || 0,
           limits.resume_view_limit || 0,
           limits.resume_download_limit || 0,
-          limits.sub_recruiter_limit || 1,
-          limits.master_login_limit !== undefined ? (Number(limits.master_login_limit) || 1) : 1,
+          sRecLimit,
+          mLoginLimit,
           limits.email_sent_count !== undefined ? (Number(limits.email_sent_count) || 0) : (Number(limits.email_limit) || 0),
           limits.whatsapp_message_count !== undefined ? (Number(limits.whatsapp_message_count) || 0) : (limits.whatsapp_sent_count !== undefined ? (Number(limits.whatsapp_sent_count) || 0) : (Number(limits.whatsapp_limit) || 0)),
           limits.excel_download_count !== undefined ? (Number(limits.excel_download_count) || 0) : (limits.excel_downloads_limit !== undefined ? (Number(limits.excel_downloads_limit) || 0) : (Number(limits.excel_download_limit) || 0))
@@ -1121,11 +1127,13 @@ const RecruiterManagementModel = {
       }
 
       // 4. Also sync company record and master recruiters' allocated seats
-      const [userRow] = await connection.query(`SELECT company_id, organization FROM users WHERE id = ?`, [recruiterId]);
-      const compId = userRow[0]?.company_id;
-      const compOrg = userRow[0]?.organization;
-      const mLoginLimit = limits.master_login_limit !== undefined ? (Number(limits.master_login_limit) || 1) : 1;
-      const sRecLimit = limits.sub_recruiter_limit !== undefined ? (Number(limits.sub_recruiter_limit) || 1) : 1;
+      const [userRow] = await connection.query(`SELECT id, company_id, organization, allocated_seats FROM users WHERE id = ?`, [recruiterId]);
+      let compId = userRow[0]?.company_id;
+      let compOrg = userRow[0]?.organization;
+      if (!compId && compOrg) {
+        const [cMatch] = await connection.query(`SELECT id FROM companies WHERE name = ? OR name LIKE ? LIMIT 1`, [compOrg, `%${compOrg.trim()}%`]);
+        if (cMatch.length > 0) compId = cMatch[0].id;
+      }
 
       if (compId || compOrg) {
         await connection.query(
@@ -1134,34 +1142,56 @@ const RecruiterManagementModel = {
              total_sub_recruiter_seats = ?,
              plan_id = ?,
              updated_at = NOW()
-           WHERE id = ? OR name = ?`,
+           WHERE (id = ? AND ? > 0) OR (name = ? AND ? != '')`,
           [
             mLoginLimit,
             sRecLimit,
             customPlanId,
             compId || 0,
+            compId || 0,
+            compOrg || '',
             compOrg || ''
           ]
         );
 
-        // If the primary master recruiter has 0 or unassigned allocated_seats, initialize it to sRecLimit
-        await connection.query(
-          `UPDATE users SET allocated_seats = ?
-           WHERE (company_id = ? OR organization = ?)
+        // Fetch all master recruiters for this company
+        const [companyMasters] = await connection.query(
+          `SELECT id, allocated_seats FROM users
+           WHERE (company_id = ? OR (company_id IS NULL AND organization = ?))
              AND role_id = 3
              AND (master_recruiter_id IS NULL OR master_recruiter_id = 0)
-             AND (allocated_seats IS NULL OR allocated_seats = 0)
-             AND id = (
-               SELECT min_id FROM (SELECT MIN(id) AS min_id FROM users WHERE (company_id = ? OR organization = ?) AND role_id = 3 AND (master_recruiter_id IS NULL OR master_recruiter_id = 0)) tmp
-             )`,
-          [
-            sRecLimit,
-            compId || 0,
-            compOrg || '',
-            compId || 0,
-            compOrg || ''
-          ]
+             AND id NOT IN (SELECT sub_recruiter_id FROM sub_recruiters)
+           ORDER BY id ASC`,
+          [compId || 0, compOrg || '']
         );
+
+        if (companyMasters.length === 1) {
+          // If only 1 master recruiter exists, assign all seats directly to them in users table
+          await connection.query(
+            `UPDATE users SET allocated_seats = ? WHERE id = ?`,
+            [sRecLimit, companyMasters[0].id]
+          );
+        } else if (companyMasters.length > 1) {
+          // If multiple masters exist:
+          const otherMastersSum = companyMasters.slice(1).reduce((sum, m) => sum + Number(m.allocated_seats || 0), 0);
+          const primaryMaster = companyMasters[0];
+          // If no other master has seats allocated, give primary the entire pool
+          if (otherMastersSum === 0) {
+            await connection.query(
+              `UPDATE users SET allocated_seats = ? WHERE id = ?`,
+              [sRecLimit, primaryMaster.id]
+            );
+          } else {
+            // Cap primary master's seats so total allocations don't exceed sRecLimit
+            const maxForPrimary = Math.max(0, sRecLimit - otherMastersSum);
+            if (Number(primaryMaster.allocated_seats || 0) > maxForPrimary) {
+              await connection.query(
+                `UPDATE users SET allocated_seats = ? WHERE id = ?`,
+                [maxForPrimary, primaryMaster.id]
+              );
+            }
+          }
+        }
       }
 
       // 5. Log the action
@@ -1596,8 +1626,92 @@ const RecruiterManagementModel = {
 
   toggleAutoApprove: async (recruiterId, autoApprove) => {
     try {
-      const query = `UPDATE users SET auto_approve = ? WHERE id = ?`;
-      await pool.query(query, [autoApprove ? 1 : 0, recruiterId]);
+      const flag = autoApprove ? 1 : 0;
+
+      // 1. Fetch target recruiter's company details
+      const [uRows] = await pool.query(
+        `SELECT u.id, u.company_id, u.organization, hp.company_name,
+                c.id AS comp_id, c.name AS comp_name
+         FROM users u
+         LEFT JOIN hr_profiles hp ON u.id = hp.user_id
+         LEFT JOIN companies c ON (u.company_id = c.id OR (u.organization IS NOT NULL AND u.organization != '' AND c.name = u.organization))
+         WHERE u.id = ?`,
+        [recruiterId]
+      );
+
+      const u = uRows[0] || {};
+      const companyId = u.company_id || u.comp_id || null;
+      const companyName = u.company_name || u.comp_name || u.organization || null;
+
+      // 2. Update target recruiter
+      await pool.query(`UPDATE users SET auto_approve = ? WHERE id = ?`, [flag, recruiterId]);
+
+      // 3. If linked to a company, cascade to:
+      //    - companies table
+      //    - all primary & master recruiters under this company
+      //    - all sub-recruiters under this company
+      if (companyId || companyName) {
+        // A. Update companies table if exists
+        try {
+          if (companyId) {
+            await pool.query(`UPDATE companies SET auto_approve = ? WHERE id = ?`, [flag, companyId]);
+          } else if (companyName) {
+            await pool.query(`UPDATE companies SET auto_approve = ? WHERE name = ?`, [flag, companyName]);
+          }
+        } catch (compErr) {
+          console.warn("[toggleAutoApprove] companies table notice:", compErr.message);
+        }
+
+        // B. Update all Master/Primary recruiters of this company
+        await pool.query(
+          `UPDATE users 
+           SET auto_approve = ? 
+           WHERE role_id = 3 
+             AND (
+               (company_id = ? AND ? IS NOT NULL) OR 
+               (organization = ? AND ? IS NOT NULL AND organization != '')
+             )`,
+          [flag, companyId, companyId, companyName, companyName]
+        );
+
+        // C. Fetch all master recruiter IDs for this company to cascade to sub-recruiters
+        const [masterRows] = await pool.query(
+          `SELECT id FROM users 
+           WHERE role_id = 3 
+             AND (
+               (company_id = ? AND ? IS NOT NULL) OR 
+               (organization = ? AND ? IS NOT NULL AND organization != '') OR
+               id = ?
+             )`,
+          [companyId, companyId, companyName, companyName, recruiterId]
+        );
+        const masterIds = masterRows.map(m => m.id);
+
+        if (masterIds.length > 0) {
+          // Update sub-recruiters via master_recruiter_id
+          await pool.query(
+            `UPDATE users SET auto_approve = ? WHERE master_recruiter_id IN (?)`,
+            [flag, masterIds]
+          );
+
+          // Update sub-recruiters via sub_recruiters table
+          await pool.query(
+            `UPDATE users 
+             SET auto_approve = ? 
+             WHERE id IN (
+               SELECT sub_recruiter_id FROM sub_recruiters 
+               WHERE main_recruiter_id IN (?) OR (company_id = ? AND ? IS NOT NULL)
+             )`,
+            [flag, masterIds, companyId, companyId]
+          );
+        }
+      }
+
+      return {
+        companyName: companyName || 'Company',
+        companyId,
+        auto_approve: flag
+      };
     } catch (error) {
       throw error;
     }
@@ -1804,13 +1918,14 @@ const RecruiterManagementModel = {
 
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
+      const companyAutoApprove = Boolean(primary.auto_approve === 1 || primary.auto_approve === true);
 
-      // Create Master Recruiter user (with requestedSeats)
+      // Create Master Recruiter user (with requestedSeats and inherited auto_approve)
       const [userResult] = await connection.query(
         `INSERT INTO users (
            first_name, last_name, email, password, phone, phone_code,
-           role_id, is_active, organization, company_id, allocated_seats, master_recruiter_id, created_date, is_email_verified
-         ) VALUES (?, ?, ?, ?, ?, '+91', 3, 1, ?, ?, ?, NULL, NOW(), 1)`,
+           role_id, is_active, organization, company_id, allocated_seats, master_recruiter_id, auto_approve, created_date, is_email_verified
+         ) VALUES (?, ?, ?, ?, ?, '+91', 3, 1, ?, ?, ?, NULL, ?, NOW(), 1)`,
         [
           first_name.trim(),
           (last_name || '').trim(),
@@ -1819,7 +1934,8 @@ const RecruiterManagementModel = {
           phone || '',
           companyName,
           companyId,
-          requestedSeats
+          requestedSeats,
+          companyAutoApprove ? 1 : 0
         ]
       );
       const newMasterId = userResult.insertId;

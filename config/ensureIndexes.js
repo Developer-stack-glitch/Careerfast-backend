@@ -70,6 +70,12 @@ async function ensureDatabaseIndexes() {
       console.warn("⚠️ [DB] industry_types check:", tblErr.message);
     }
 
+    // companies columns
+    await ensureColumn("companies", "auto_approve", "TINYINT(1) DEFAULT 0");
+    await ensureColumn("companies", "max_master_recruiters", "INT DEFAULT 1");
+    await ensureColumn("companies", "total_sub_recruiter_seats", "INT DEFAULT 1");
+    await ensureColumn("companies", "plan_id", "INT NULL DEFAULT NULL");
+
     // users columns
     await ensureColumn("users", "auto_approve", "TINYINT(1) DEFAULT 0");
     await ensureColumn("users", "last_login", "DATETIME NULL DEFAULT NULL");

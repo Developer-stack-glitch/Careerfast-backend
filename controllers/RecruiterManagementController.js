@@ -213,11 +213,12 @@ const RecruiterManagementController = {
       const { id } = req.params;
       const { auto_approve } = req.body;
       
-      await RecruiterManagementModel.toggleAutoApprove(id, auto_approve);
+      const result = await RecruiterManagementModel.toggleAutoApprove(id, auto_approve);
 
       res.status(200).json({
         success: true,
-        message: `Auto approve has been ${auto_approve ? 'enabled' : 'disabled'} for this recruiter.`
+        message: `Auto approve has been ${auto_approve ? 'enabled' : 'disabled'} for ${result?.companyName || 'this company'} and all associated primary & sub-recruiters.`,
+        data: result
       });
     } catch (error) {
       console.error("Error toggling auto approve:", error);

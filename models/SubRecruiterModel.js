@@ -142,6 +142,7 @@ const SubRecruiterModel = {
                 sr.designation, sr.role_preset, sr.permissions, sr.status,
                 sr.created_at, sr.updated_at,
                 u.first_name, u.last_name, u.email, u.phone, u.is_active as user_active,
+                COALESCE(u.auto_approve, 0) as auto_approve,
                 CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) as full_name,
                 (SELECT COUNT(*) FROM job_post jp WHERE jp.user_id = sr.sub_recruiter_id) as jobs_posted_count,
                 mu.first_name as master_first_name,
@@ -338,10 +339,12 @@ const SubRecruiterModel = {
       // 1. Verify Seat Quota and Master Recruiter Account
       const [userRows] = await connection.query(
         `SELECT u.id, u.first_name, u.last_name, u.email, u.organization, u.company_id, u.allocated_seats,
+                u.auto_approve, c.auto_approve AS company_auto_approve,
                 rs.id as subscription_id, rs.status as subscription_status,
                 sp.id as plan_id, sp.name as plan_name, sp.plan_type, sp.slug as plan_slug,
                 sp.sub_recruiter_limit, sp.master_login_limit
          FROM users u
+         LEFT JOIN companies c ON (u.company_id = c.id OR (u.organization IS NOT NULL AND u.organization != '' AND c.name = u.organization))
          LEFT JOIN recruiter_subscriptions rs ON u.id = rs.recruiter_id AND rs.id = (
            SELECT MAX(id) FROM recruiter_subscriptions WHERE recruiter_id = u.id
          )
@@ -416,12 +419,20 @@ const SubRecruiterModel = {
       // 4. Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // 5. Create user in `users` table
+      // Check if target master recruiter or company is auto approved
+      const isAutoApprove = Boolean(
+        masterUser.auto_approve === 1 ||
+        masterUser.auto_approve === true ||
+        masterUser.company_auto_approve === 1 ||
+        masterUser.company_auto_approve === true
+      );
+
+      // 5. Create user in `users` table (inheriting company auto_approve)
       const [userResult] = await connection.query(
         `INSERT INTO users (
           first_name, last_name, email, password, phone, phone_code,
-          role_id, is_active, organization, company_id, master_recruiter_id, created_date, is_email_verified
-        ) VALUES (?, ?, ?, ?, ?, '+91', 3, 1, ?, ?, ?, NOW(), 1)`,
+          role_id, is_active, organization, company_id, master_recruiter_id, auto_approve, created_date, is_email_verified
+        ) VALUES (?, ?, ?, ?, ?, '+91', 3, 1, ?, ?, ?, ?, NOW(), 1)`,
         [
           first_name.trim(),
           last_name.trim(),
@@ -430,7 +441,8 @@ const SubRecruiterModel = {
           phone || '',
           organization,
           companyId,
-          targetMasterId
+          targetMasterId,
+          isAutoApprove ? 1 : 0
         ]
       );
       const newUserId = userResult.insertId;
