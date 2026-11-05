@@ -8,7 +8,7 @@ const SubRecruiterModel = {
     try {
       // 1. Get plan quota and pool metrics for this master recruiter
       const [subRows] = await pool.query(
-        `SELECT rs.id as subscription_id, rs.plan_id, rs.status,
+        `SELECT rs.id as subscription_id, rs.plan_id, rs.status, rs.start_date, rs.expiry_date,
                 sp.name as plan_name, sp.plan_type, sp.slug as plan_slug,
                 COALESCE(sp.sub_recruiter_limit, 0) as sub_recruiter_limit,
                 COALESCE(sp.job_post_limit, 0) as job_post_limit,
@@ -35,6 +35,40 @@ const SubRecruiterModel = {
          LIMIT 1`,
         [mainRecruiterId]
       );
+
+      // 🛡️ Company Validity Fallback: If master recruiter has no active subscription or expired, check company active subscription
+      if (subRows.length > 0 && (!subRows[0].plan_id || !subRows[0].expiry_date || new Date(subRows[0].expiry_date) < new Date() || subRows[0].status === 'Expired')) {
+        const cId = subRows[0].company_id;
+        const cName = subRows[0].company_name;
+        if (cId || cName) {
+          const [compActiveSub] = await pool.query(
+            `SELECT rs.id as subscription_id, rs.plan_id, rs.status, rs.start_date, rs.expiry_date,
+                    sp.name as plan_name, sp.plan_type, sp.slug as plan_slug,
+                    COALESCE(sp.sub_recruiter_limit, 0) as sub_recruiter_limit,
+                    COALESCE(sp.job_post_limit, 0) as job_post_limit,
+                    COALESCE(sp.resume_view_limit, 0) as resume_view_limit,
+                    COALESCE(sp.resume_download_limit, 0) as resume_download_limit,
+                    COALESCE(sp.email_limit, 50) as email_limit,
+                    COALESCE(sp.excel_download_limit, 50) as excel_download_limit,
+                    COALESCE(su.job_posts_used, 0) as job_posts_used,
+                    COALESCE(su.resume_views_used, 0) as resume_views_used,
+                    COALESCE(su.resume_downloads_used, 0) as resume_downloads_used,
+                    COALESCE(su.emails_sent, su.emails_used, 0) as emails_sent,
+                    COALESCE(su.excel_downloads_used, 0) as excel_downloads_used
+             FROM recruiter_subscriptions rs
+             JOIN subscription_plans sp ON rs.plan_id = sp.id
+             LEFT JOIN subscription_usage su ON rs.id = su.subscription_id
+             JOIN users u ON rs.recruiter_id = u.id
+             WHERE (u.company_id = ? OR (u.organization IS NOT NULL AND u.organization != '' AND u.organization = ?))
+               AND rs.status = 'Active' AND rs.expiry_date >= NOW()
+             ORDER BY rs.expiry_date DESC, rs.id DESC LIMIT 1`,
+            [cId || 0, cName || '']
+          );
+          if (compActiveSub.length > 0) {
+            subRows[0] = { ...subRows[0], ...compActiveSub[0] };
+          }
+        }
+      }
 
       const isCustomPlan = Boolean(
         subRows[0]?.is_custom ||
@@ -258,6 +292,9 @@ const SubRecruiterModel = {
           company_id: companyId,
           company_name: companyName,
           plan_name: planName,
+          subscription_expiry: subRows[0]?.expiry_date || null,
+          subscription_start: subRows[0]?.start_date || null,
+          subscription_status: subRows[0]?.status || 'Active',
           master_recruiters: masterRecruiters,
           pool: {
             job_posts: {

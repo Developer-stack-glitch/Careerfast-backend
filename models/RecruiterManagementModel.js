@@ -383,7 +383,11 @@ const RecruiterManagementModel = {
                 u2.created_date, COALESCE(u2.last_active, u2.updated_date, u2.created_date) AS last_active,
                 COALESCE(u2.allocated_seats, 0) AS allocated_seats,
                 COALESCE(u2.auto_approve, 0) AS auto_approve,
-                (SELECT COUNT(*) FROM sub_recruiters sr WHERE sr.main_recruiter_id = u2.id) AS sub_recruiters_count
+                (SELECT COUNT(*) FROM sub_recruiters sr WHERE sr.main_recruiter_id = u2.id) AS sub_recruiters_count,
+                rs2.expiry_date AS direct_expiry_date,
+                rs2.start_date AS direct_start_date,
+                rs2.status AS direct_status,
+                sp2.name AS master_plan_name
          FROM users u2
          LEFT JOIN recruiter_subscriptions rs2 ON u2.id = rs2.recruiter_id AND rs2.id = (
            SELECT MAX(id) FROM recruiter_subscriptions WHERE recruiter_id = u2.id
@@ -401,13 +405,32 @@ const RecruiterManagementModel = {
       const allocatedSubSeatsSum = masterRecruitersRows.reduce((sum, m) => sum + Number(m.allocated_seats || 0), 0);
       const availableSubSeats = Math.max(0, totalCompanySeats - allocatedSubSeatsSum);
 
+      const masterRecruitersWithValidity = masterRecruitersRows.map(m => {
+        const subExpiry = m.direct_expiry_date || recruiter.subscription_expiry;
+        const subStart = m.direct_start_date || recruiter.subscription_start;
+        const subStatus = m.direct_status || recruiter.subscription_status || 'Active';
+        let daysLeft = null;
+        if (subExpiry) {
+          const expDate = new Date(subExpiry);
+          const now = new Date();
+          daysLeft = Math.ceil((expDate - now) / (1000 * 60 * 60 * 24));
+        }
+        return {
+          ...m,
+          subscription_expiry: subExpiry,
+          subscription_start: subStart,
+          subscription_status: subStatus,
+          days_left: daysLeft
+        };
+      });
+
       return {
         ...recruiter,
         total_sub_recruiter_seats: totalCompanySeats,
         allocated_sub_seats_sum: allocatedSubSeatsSum,
         available_sub_seats: availableSubSeats,
-        master_recruiters: masterRecruitersRows,
-        master_recruiters_count: masterRecruitersRows.length,
+        master_recruiters: masterRecruitersWithValidity,
+        master_recruiters_count: masterRecruitersWithValidity.length,
         subscription_history: historyRows,
         payments: paymentsRows,
         audit_logs: auditRows
@@ -778,6 +801,163 @@ const RecruiterManagementModel = {
     }
   },
 
+  syncCompanySubscriptionValidity: async (companyIdOrRecruiterId, clientConnection = null) => {
+    const conn = clientConnection || await pool.getConnection();
+    const shouldRelease = !clientConnection;
+    try {
+      let compId = null;
+      let compName = null;
+      let primaryId = null;
+
+      // Check if argument is a recruiter user ID
+      const [userRows] = await conn.query(
+        `SELECT id, company_id, organization, role_id FROM users WHERE id = ?`,
+        [companyIdOrRecruiterId]
+      );
+      if (userRows.length > 0) {
+        compId = userRows[0].company_id;
+        compName = userRows[0].organization;
+      } else {
+        const [compRows] = await conn.query(
+          `SELECT id, name FROM companies WHERE id = ?`,
+          [companyIdOrRecruiterId]
+        );
+        if (compRows.length > 0) {
+          compId = compRows[0].id;
+          compName = compRows[0].name;
+        }
+      }
+
+      if (!compId && !compName) return null;
+
+      // Fetch all Master Recruiters under this company
+      const [masters] = await conn.query(
+        `SELECT id, first_name, last_name, email FROM users
+         WHERE (company_id = ? OR (organization IS NOT NULL AND organization != '' AND organization = ?))
+           AND role_id = 3
+           AND (master_recruiter_id IS NULL OR master_recruiter_id = 0)
+           AND id NOT IN (SELECT sub_recruiter_id FROM sub_recruiters)
+         ORDER BY id ASC`,
+        [compId || 0, compName || '']
+      );
+
+      if (masters.length === 0) return null;
+      primaryId = masters[0].id;
+
+      // Find the subscription that represents this company's validity
+      const [subRows] = await conn.query(
+        `SELECT rs.*, sp.name AS plan_name, sp.validity_days
+         FROM recruiter_subscriptions rs
+         LEFT JOIN subscription_plans sp ON rs.plan_id = sp.id
+         WHERE (rs.recruiter_id = ? OR (rs.company_id IS NOT NULL AND rs.company_id = ?))
+         ORDER BY (rs.recruiter_id = ?) DESC, (rs.status = 'Active') DESC, rs.expiry_date DESC, rs.id DESC
+         LIMIT 1`,
+        [primaryId, compId || 0, primaryId]
+      );
+
+      if (subRows.length === 0) return null;
+      const targetSub = subRows[0];
+      const targetPlanId = targetSub.plan_id;
+      const targetStart = targetSub.start_date;
+      const targetExpiry = targetSub.expiry_date;
+      const targetStatus = targetSub.status || 'Active';
+      const targetBilling = targetSub.billing_cycle || 'monthly';
+      const targetPaymentStatus = targetSub.payment_status || 'Paid';
+
+      // Ensure companies table has plan_id in sync
+      if (compId && targetPlanId) {
+        await conn.query(
+          `UPDATE companies SET plan_id = ?, updated_at = NOW() WHERE id = ?`,
+          [targetPlanId, compId]
+        );
+      }
+
+      // Cascade validity (expiry_date, start_date, status, plan_id) to ALL master recruiters
+      for (const m of masters) {
+        const [existingMasterSub] = await conn.query(
+          `SELECT id FROM recruiter_subscriptions WHERE recruiter_id = ? ORDER BY id DESC LIMIT 1`,
+          [m.id]
+        );
+
+        if (existingMasterSub.length > 0) {
+          const subId = existingMasterSub[0].id;
+          await conn.query(
+            `UPDATE recruiter_subscriptions SET
+               company_id = COALESCE(?, company_id),
+               plan_id = ?,
+               billing_cycle = ?,
+               start_date = ?,
+               expiry_date = ?,
+               status = ?,
+               payment_status = ?,
+               updated_at = NOW()
+             WHERE id = ?`,
+            [
+              compId,
+              targetPlanId,
+              targetBilling,
+              targetStart,
+              targetExpiry,
+              targetStatus,
+              targetPaymentStatus,
+              subId
+            ]
+          );
+
+          await conn.query(
+            `UPDATE subscription_usage SET
+               billing_period_start = ?,
+               billing_period_end = ?,
+               updated_at = NOW()
+             WHERE subscription_id = ?`,
+            [targetStart, targetExpiry, subId]
+          );
+        } else {
+          const [insertRes] = await conn.query(
+            `INSERT INTO recruiter_subscriptions (
+               recruiter_id, company_id, plan_id, billing_cycle, price_paid,
+               start_date, expiry_date, status, payment_status, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, 0.00, ?, ?, ?, ?, NOW(), NOW())`,
+            [
+              m.id,
+              compId,
+              targetPlanId,
+              targetBilling,
+              targetStart,
+              targetExpiry,
+              targetStatus,
+              targetPaymentStatus
+            ]
+          );
+
+          await conn.query(
+            `INSERT INTO subscription_usage (
+               subscription_id, recruiter_id, billing_period_start, billing_period_end,
+               job_posts_used, resume_views_used, resume_downloads_used,
+               featured_jobs_used, urgent_jobs_used, candidate_contacts_used
+             ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0)`,
+            [insertRes.insertId, m.id, targetStart, targetExpiry]
+          );
+        }
+      }
+
+      return {
+        company_id: compId,
+        company_name: compName,
+        plan_id: targetPlanId,
+        start_date: targetStart,
+        expiry_date: targetExpiry,
+        status: targetStatus,
+        synced_masters_count: masters.length
+      };
+    } catch (err) {
+      console.error("[syncCompanySubscriptionValidity] Error:", err.message);
+      throw err;
+    } finally {
+      if (shouldRelease) conn.release();
+    }
+  },
+
   changePlan: async (recruiterId, payload, adminId = 1) => {
     const connection = await pool.getConnection();
     try {
@@ -929,6 +1109,9 @@ const RecruiterManagementModel = {
         ]);
       }
 
+      // 🛡️ CASCADE PLAN & VALIDITY: Sync plan and validity to ALL master recruiters under this company
+      await RecruiterManagementModel.syncCompanySubscriptionValidity(recruiterId, connection);
+
       await connection.commit();
       return {
         success: true,
@@ -1008,6 +1191,9 @@ const RecruiterManagementModel = {
         JSON.stringify({ previous_expiry: sub.expiry_date }),
         JSON.stringify({ new_expiry: formattedExpiry, extended_days: daysToAdd })
       ]);
+
+      // 🛡️ CASCADE VALIDITY: Sync expiry date and Active status to ALL master recruiters under this company
+      await RecruiterManagementModel.syncCompanySubscriptionValidity(recruiterId, connection);
 
       await connection.commit();
 
@@ -1205,6 +1391,9 @@ const RecruiterManagementModel = {
           JSON.stringify({ new_plan_id: customPlanId, limits })
         ]
       );
+
+      // 🛡️ CASCADE CUSTOM PLAN & VALIDITY: Sync custom plan and validity to ALL master recruiters under this company
+      await RecruiterManagementModel.syncCompanySubscriptionValidity(recruiterId, connection);
 
       await connection.commit();
       return { message: "Custom plan limits applied successfully." };
@@ -1841,7 +2030,8 @@ const RecruiterManagementModel = {
       // 1. Get primary recruiter / company info
       const [primaryRows] = await connection.query(
         `SELECT u.*, hp.company_name, hp.id AS hr_profile_id, c.id AS comp_id, c.max_master_recruiters, c.total_sub_recruiter_seats,
-                rs.plan_id, rs.id AS subscription_id, sp.master_login_limit, sp.sub_recruiter_limit
+                rs.plan_id, rs.id AS subscription_id, rs.start_date, rs.expiry_date, rs.status AS subscription_status, rs.billing_cycle, rs.payment_status,
+                sp.master_login_limit, sp.sub_recruiter_limit
          FROM users u
          LEFT JOIN hr_profiles hp ON u.id = hp.user_id
          LEFT JOIN companies c ON u.company_id = c.id
@@ -1951,14 +2141,20 @@ const RecruiterManagementModel = {
         [newMasterId, companyName, phone || '', email.trim().toLowerCase()]
       );
 
-      // Clone subscription for this master recruiter linked to company plan
+      // Clone subscription for this master recruiter linked to company plan and validity
       if (primary.plan_id) {
+        const subStart = primary.start_date || new Date().toISOString().slice(0, 19).replace('T', ' ');
+        const subExpiry = primary.expiry_date || new Date(Date.now() + 30*24*60*60*1000).toISOString().slice(0, 19).replace('T', ' ');
+        const subStatus = primary.subscription_status || 'Active';
+        const subBilling = primary.billing_cycle || 'monthly';
+        const subPaymentStatus = primary.payment_status || 'Paid';
+
         const [subResult] = await connection.query(
           `INSERT INTO recruiter_subscriptions (
              recruiter_id, company_id, plan_id, billing_cycle, price_paid,
              start_date, expiry_date, status, payment_status, created_at, updated_at
-           ) VALUES (?, ?, ?, 'custom', 0, NOW(), DATE_ADD(NOW(), INTERVAL 1 YEAR), 'Active', 'Paid', NOW(), NOW())`,
-          [newMasterId, companyId, primary.plan_id]
+           ) VALUES (?, ?, ?, ?, 0.00, ?, ?, ?, ?, NOW(), NOW())`,
+          [newMasterId, companyId, primary.plan_id, subBilling, subStart, subExpiry, subStatus, subPaymentStatus]
         );
 
         // Initialize usage
@@ -1967,8 +2163,8 @@ const RecruiterManagementModel = {
              subscription_id, recruiter_id, billing_period_start, billing_period_end,
              job_posts_used, resume_views_used, resume_downloads_used,
              featured_jobs_used, urgent_jobs_used, candidate_contacts_used
-           ) VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 1 YEAR), 0, 0, 0, 0, 0, 0)`,
-          [subResult.insertId, newMasterId]
+           ) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0)`,
+          [subResult.insertId, newMasterId, subStart, subExpiry]
         );
       }
 
@@ -1992,6 +2188,9 @@ const RecruiterManagementModel = {
           })
         ]
       );
+
+      // 🛡️ CASCADE VALIDITY: Ensure all Master Recruiters for this company are aligned in validity
+      await RecruiterManagementModel.syncCompanySubscriptionValidity(companyId || recruiterId, connection);
 
       await connection.commit();
 

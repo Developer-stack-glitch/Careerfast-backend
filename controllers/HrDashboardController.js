@@ -281,6 +281,34 @@ const HrDashboardController = {
           [effectiveRecruiterId]
         );
 
+        // 🛡️ Company Validity Fallback: If subscription is expired or missing, check company active subscription
+        if (!subRows || subRows.length === 0 || subRows[0].status !== 'Active' || (subRows[0].expiry_date && new Date(subRows[0].expiry_date) < new Date())) {
+          const [compActiveSub] = await pool.query(
+            SELECT rs.*, sp.name AS plan_name, sp.job_post_limit, sp.active_job_limit, sp.resume_view_limit, sp.resume_download_limit,
+                    COALESCE(sp.email_limit, 50) AS email_limit,
+                    COALESCE(sp.whatsapp_limit, 50) AS whatsapp_limit,
+                    COALESCE(sp.excel_download_limit, 50) AS excel_download_limit,
+                    COALESCE(su.job_posts_used, 0) AS job_posts_used,
+                    COALESCE(su.resume_views_used, 0) AS resume_views_used,
+                    COALESCE(su.resume_downloads_used, 0) AS resume_downloads_used,
+                    COALESCE(su.emails_sent, 0) AS emails_sent,
+                    COALESCE(su.whatsapp_messages_sent, 0) AS whatsapp_messages_sent,
+                    COALESCE(su.excel_downloads_used, 0) AS excel_downloads_used
+             FROM recruiter_subscriptions rs
+             INNER JOIN subscription_plans sp ON rs.plan_id = sp.id
+             LEFT JOIN subscription_usage su ON rs.id = su.subscription_id
+             JOIN users u ON rs.recruiter_id = u.id
+             WHERE (u.company_id = (SELECT company_id FROM users WHERE id = ?) 
+                    OR (u.organization IS NOT NULL AND u.organization != '' AND u.organization = (SELECT organization FROM users WHERE id = ?)))
+               AND rs.status = 'Active' AND rs.expiry_date >= NOW()
+             ORDER BY rs.expiry_date DESC, rs.id DESC LIMIT 1,
+            [effectiveRecruiterId, effectiveRecruiterId]
+          );
+          if (compActiveSub.length > 0) {
+            subRows = compActiveSub;
+          }
+        }
+
         if (subRows && subRows.length > 0) {
           const sub = subRows[0];
           const companyActiveLimit = sub.active_job_limit !== undefined ? Number(sub.active_job_limit) : 3;
