@@ -360,19 +360,18 @@ const jobPosting = async (request, response) => {
 
       // 🛡️ Company Validity Fallback: If subscription is expired or missing, check if company has active subscription
       if (subRows.length === 0 || (subRows[0].expiry_date && new Date(subRows[0].expiry_date) < new Date()) || subRows[0].status === 'Expired') {
-        const [compMasterSub] = await pool.query(
+        const [compMasterSub] = await pool.query(`
           SELECT rs.*, sp.job_post_limit, sp.active_job_limit, sp.name AS plan_name,
-                  COALESCE(su.job_posts_used, 0) AS job_posts_used, su.id AS usage_id
-           FROM recruiter_subscriptions rs
-           INNER JOIN subscription_plans sp ON rs.plan_id = sp.id
-           LEFT JOIN subscription_usage su ON rs.id = su.subscription_id
-           JOIN users u ON rs.recruiter_id = u.id
-           WHERE (u.company_id = (SELECT company_id FROM users WHERE id = ?) 
-                  OR (u.organization IS NOT NULL AND u.organization != '' AND u.organization = (SELECT organization FROM users WHERE id = ?)))
-             AND rs.status = 'Active' AND rs.expiry_date >= NOW()
-           ORDER BY rs.expiry_date DESC, rs.id DESC LIMIT 1,
-          [effectiveRecruiterId, effectiveRecruiterId]
-        );
+                 COALESCE(su.job_posts_used, 0) AS job_posts_used, su.id AS usage_id
+          FROM recruiter_subscriptions rs
+          INNER JOIN subscription_plans sp ON rs.plan_id = sp.id
+          LEFT JOIN subscription_usage su ON rs.id = su.subscription_id
+          JOIN users u ON rs.recruiter_id = u.id
+          WHERE (u.company_id = (SELECT company_id FROM users WHERE id = ?) 
+                 OR (u.organization IS NOT NULL AND u.organization != '' AND u.organization = (SELECT organization FROM users WHERE id = ?)))
+            AND rs.status = 'Active' AND rs.expiry_date >= NOW()
+          ORDER BY rs.expiry_date DESC, rs.id DESC LIMIT 1
+        `, [effectiveRecruiterId, effectiveRecruiterId]);
         if (compMasterSub.length > 0) {
           subRows = compMasterSub;
         }
