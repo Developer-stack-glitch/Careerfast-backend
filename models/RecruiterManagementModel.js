@@ -1861,7 +1861,10 @@ const RecruiterManagementModel = {
       const companyId = primary.company_id || primary.comp_id;
       const companyName = primary.company_name || primary.organization || 'Company';
       const masterLimit = primary.max_master_recruiters || primary.master_login_limit || 1;
-      const companyTotalSubSeats = Number(primary.total_sub_recruiter_seats || primary.sub_recruiter_limit || 0);
+      const companyTotalSubSeats = Math.max(
+        Number(primary.total_sub_recruiter_seats || 0),
+        Number(primary.sub_recruiter_limit || 0)
+      );
 
       // 2. Count existing Master Recruiters
       const [countRows] = await connection.query(
@@ -2028,15 +2031,8 @@ const RecruiterManagementModel = {
 
       // 1. Get Master Recruiter info
       const [masterRows] = await connection.query(
-        `SELECT u.id, u.first_name, u.last_name, u.email, u.company_id, u.organization, u.allocated_seats,
-                c.id as comp_id, c.name as comp_name, c.total_sub_recruiter_seats,
-                sp.sub_recruiter_limit
+        `SELECT u.id, u.first_name, u.last_name, u.email, u.company_id, u.organization, u.allocated_seats
          FROM users u
-         LEFT JOIN companies c ON (u.company_id = c.id OR (u.company_id IS NULL AND u.organization = c.name))
-         LEFT JOIN recruiter_subscriptions rs ON u.id = rs.recruiter_id AND rs.id = (
-           SELECT MAX(id) FROM recruiter_subscriptions WHERE recruiter_id = u.id
-         )
-         LEFT JOIN subscription_plans sp ON rs.plan_id = sp.id
          WHERE u.id = ? AND u.role_id = 3
            AND (u.master_recruiter_id IS NULL OR u.master_recruiter_id = 0)
          LIMIT 1`,
@@ -2048,8 +2044,24 @@ const RecruiterManagementModel = {
       }
 
       const master = masterRows[0];
-      const companyId = master.company_id || master.comp_id;
-      const companyName = master.comp_name || master.organization;
+      let companyId = master.company_id;
+      let companyName = master.organization;
+
+      // Resolve company record
+      let compRecord = null;
+      if (companyId) {
+        const [cById] = await connection.query(`SELECT * FROM companies WHERE id = ?`, [companyId]);
+        if (cById.length > 0) compRecord = cById[0];
+      }
+      if (!compRecord && companyName) {
+        const [cByName] = await connection.query(`SELECT * FROM companies WHERE name = ? OR name LIKE ? LIMIT 1`, [companyName, `%${companyName.trim()}%`]);
+        if (cByName.length > 0) compRecord = cByName[0];
+      }
+
+      if (compRecord) {
+        companyId = compRecord.id;
+        companyName = compRecord.name;
+      }
 
       // 2. Check current sub-recruiters count for this master
       const [subCountRows] = await connection.query(
@@ -2061,8 +2073,41 @@ const RecruiterManagementModel = {
         throw new Error(`Cannot reduce seats to ${newSeats}. This Master Recruiter currently has ${currentSubCount} active sub-recruiters.`);
       }
 
-      // 3. Check Company total sub-recruiter seats limit
-      const totalCompanySeats = Number(master.total_sub_recruiter_seats || master.sub_recruiter_limit || 0);
+      // 3. Look up Company total sub-recruiter seats pool:
+      // Check companies table, company plan, and primary master recruiter's subscription plan
+      const [primaryPlanRows] = await connection.query(
+        `SELECT sp.sub_recruiter_limit
+         FROM users u
+         JOIN recruiter_subscriptions rs ON u.id = rs.recruiter_id AND rs.id = (
+           SELECT MAX(id) FROM recruiter_subscriptions WHERE recruiter_id = u.id
+         )
+         JOIN subscription_plans sp ON rs.plan_id = sp.id
+         WHERE (u.company_id = ? OR (u.organization IS NOT NULL AND u.organization = ?))
+           AND u.role_id = 3
+           AND (u.master_recruiter_id IS NULL OR u.master_recruiter_id = 0)
+         ORDER BY u.id ASC
+         LIMIT 1`,
+        [companyId || 0, companyName || '']
+      );
+
+      const [companyPlanRows] = compRecord?.plan_id ? await connection.query(
+        `SELECT sub_recruiter_limit FROM subscription_plans WHERE id = ?`,
+        [compRecord.plan_id]
+      ) : [[]];
+
+      const totalCompanySeats = Math.max(
+        Number(compRecord?.total_sub_recruiter_seats || 0),
+        Number(companyPlanRows[0]?.sub_recruiter_limit || 0),
+        Number(primaryPlanRows[0]?.sub_recruiter_limit || 0)
+      );
+
+      // Keep companies.total_sub_recruiter_seats in sync if it had an outdated lower value
+      if (compRecord && totalCompanySeats > 0 && compRecord.total_sub_recruiter_seats !== totalCompanySeats) {
+        await connection.query(
+          `UPDATE companies SET total_sub_recruiter_seats = ? WHERE id = ?`,
+          [totalCompanySeats, compRecord.id]
+        );
+      }
 
       // Sum of allocated seats of other masters for this company
       const [otherMastersRows] = await connection.query(
