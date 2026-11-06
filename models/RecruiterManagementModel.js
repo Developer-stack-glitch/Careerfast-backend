@@ -1894,6 +1894,39 @@ const RecruiterManagementModel = {
             [flag, masterIds, companyId, companyId]
           );
         }
+
+        // D. If auto-approve is being enabled, immediately auto-approve all currently pending jobs for this company and its recruiters
+        if (flag === 1) {
+          const [allCompRecruiters] = await pool.query(
+            `SELECT id FROM users 
+             WHERE (company_id = ? AND ? IS NOT NULL AND ? > 0)
+                OR (organization = ? AND ? IS NOT NULL AND organization != '')
+                OR id = ?
+                OR master_recruiter_id IN (?)`,
+            [companyId, companyId, companyId, companyName, companyName, recruiterId, masterIds.length ? masterIds : [0]]
+          );
+          const allUids = allCompRecruiters.map(r => r.id);
+          if (allUids.length > 0) {
+            await pool.query(
+              `UPDATE job_post 
+               SET approval_status = 'approved', approved_at = NOW() 
+               WHERE user_id IN (?) 
+                 AND (approval_status = 'pending' OR approval_status IS NULL) 
+                 AND (is_closed = 0 OR is_closed IS NULL)`,
+              [allUids]
+            );
+          }
+        }
+      } else if (flag === 1) {
+        // Even if not linked to a company, approve target recruiter's pending jobs
+        await pool.query(
+          `UPDATE job_post 
+           SET approval_status = 'approved', approved_at = NOW() 
+           WHERE user_id = ? 
+             AND (approval_status = 'pending' OR approval_status IS NULL) 
+             AND (is_closed = 0 OR is_closed IS NULL)`,
+          [recruiterId]
+        );
       }
 
       return {
@@ -2111,7 +2144,8 @@ const RecruiterManagementModel = {
 
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
-      const companyAutoApprove = Boolean(primary.auto_approve === 1 || primary.auto_approve === true);
+      const isAutoApproveFlag = (v) => v === 1 || v === true || v === '1' || (v?.data && v.data[0] === 1) || (Buffer.isBuffer(v) && v[0] === 1);
+      const companyAutoApprove = isAutoApproveFlag(primary.auto_approve) || isAutoApproveFlag(primary.company_auto_approve);
 
       // Create Master Recruiter user (with requestedSeats and inherited auto_approve)
       const [userResult] = await connection.query(

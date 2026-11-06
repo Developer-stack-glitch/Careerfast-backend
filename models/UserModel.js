@@ -44,117 +44,169 @@ const UserModel = {
         baseParams.push(searchPattern, searchPattern, searchPattern);
       }
 
-      // Date filtering conditions for created_date and last_login/last_active
-      let createdDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
-      let lastLoginCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 30 DAY))";
-      let dateCondition = "";
-      let dateParams = [];
-      let selectDateParams = [];
+      // 1. Resolve date filtering conditions
+      let hasDateFilter = false;
+      let regDateCond = "";
+      let regDateParams = [];
+      let loginDateCond = "";
+      let loginDateParams = [];
 
       if (startDate && endDate) {
-        createdDateCond = "DATE(u.created_date) BETWEEN ? AND ?";
-        lastLoginCond = "(DATE(u.last_login) BETWEEN ? AND ? OR DATE(u.last_active) BETWEEN ? AND ?)";
-        selectDateParams = [startDate, endDate, startDate, endDate, startDate, endDate];
-        dateCondition = " AND (DATE(u.created_date) BETWEEN ? AND ? OR DATE(u.last_login) BETWEEN ? AND ? OR DATE(u.last_active) BETWEEN ? AND ?)";
-        dateParams = [startDate, endDate, startDate, endDate, startDate, endDate];
+        hasDateFilter = true;
+        regDateCond = "DATE(u.created_date) BETWEEN ? AND ?";
+        regDateParams = [startDate, endDate];
+        loginDateCond = "(DATE(u.last_login) BETWEEN ? AND ? OR DATE(u.last_active) BETWEEN ? AND ?)";
+        loginDateParams = [startDate, endDate, startDate, endDate];
       } else if (startDate) {
-        createdDateCond = "DATE(u.created_date) >= ?";
-        lastLoginCond = "(DATE(u.last_login) >= ? OR DATE(u.last_active) >= ?)";
-        selectDateParams = [startDate, startDate, startDate];
-        dateCondition = " AND (DATE(u.created_date) >= ? OR DATE(u.last_login) >= ? OR DATE(u.last_active) >= ?)";
-        dateParams = [startDate, startDate, startDate];
+        hasDateFilter = true;
+        regDateCond = "DATE(u.created_date) >= ?";
+        regDateParams = [startDate];
+        loginDateCond = "(DATE(u.last_login) >= ? OR DATE(u.last_active) >= ?)";
+        loginDateParams = [startDate, startDate];
       } else if (endDate) {
-        createdDateCond = "DATE(u.created_date) <= ?";
-        lastLoginCond = "(DATE(u.last_login) <= ? OR DATE(u.last_active) <= ?)";
-        selectDateParams = [endDate, endDate, endDate];
-        dateCondition = " AND (DATE(u.created_date) <= ? OR DATE(u.last_login) <= ? OR DATE(u.last_active) <= ?)";
-        dateParams = [endDate, endDate, endDate];
-      } else if (timeFilter) {
+        hasDateFilter = true;
+        regDateCond = "DATE(u.created_date) <= ?";
+        regDateParams = [endDate];
+        loginDateCond = "(DATE(u.last_login) <= ? OR DATE(u.last_active) <= ?)";
+        loginDateParams = [endDate, endDate];
+      } else if (timeFilter && timeFilter !== "All Time") {
+        hasDateFilter = true;
         if (timeFilter === "Today") {
-          createdDateCond = "DATE(u.created_date) = CURDATE()";
-          lastLoginCond = "(DATE(u.last_login) = CURDATE() OR DATE(u.last_active) = CURDATE())";
-          dateCondition = " AND (DATE(u.created_date) = CURDATE() OR DATE(u.last_login) = CURDATE() OR DATE(u.last_active) = CURDATE())";
+          regDateCond = "DATE(u.created_date) = CURDATE()";
+          loginDateCond = "(DATE(u.last_login) = CURDATE() OR DATE(u.last_active) = CURDATE())";
         } else if (timeFilter === "Yesterday") {
-          createdDateCond = "DATE(u.created_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)";
-          lastLoginCond = "(DATE(u.last_login) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) OR DATE(u.last_active) = DATE_SUB(CURDATE(), INTERVAL 1 DAY))";
-          dateCondition = " AND (DATE(u.created_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) OR DATE(u.last_login) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) OR DATE(u.last_active) = DATE_SUB(CURDATE(), INTERVAL 1 DAY))";
+          regDateCond = "DATE(u.created_date) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)";
+          loginDateCond = "(DATE(u.last_login) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) OR DATE(u.last_active) = DATE_SUB(CURDATE(), INTERVAL 1 DAY))";
         } else if (timeFilter === "Last 7 Days") {
-          createdDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
-          lastLoginCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
-          dateCondition = " AND (u.created_date >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR u.last_login >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
+          regDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+          loginDateCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 7 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 7 DAY))";
         } else if (timeFilter === "Last 30 Days") {
-          createdDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
-          lastLoginCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 30 DAY))";
-          dateCondition = " AND (u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.last_login >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 30 DAY))";
+          regDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+          loginDateCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 30 DAY) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 30 DAY))";
         } else if (timeFilter === "This Month") {
-          createdDateCond = "u.created_date >= DATE_FORMAT(NOW(), '%Y-%m-01')";
-          lastLoginCond = "(u.last_login >= DATE_FORMAT(NOW(), '%Y-%m-01') OR u.last_active >= DATE_FORMAT(NOW(), '%Y-%m-01'))";
-          dateCondition = " AND (u.created_date >= DATE_FORMAT(NOW(), '%Y-%m-01') OR u.last_login >= DATE_FORMAT(NOW(), '%Y-%m-01') OR u.last_active >= DATE_FORMAT(NOW(), '%Y-%m-01'))";
+          regDateCond = "u.created_date >= DATE_FORMAT(NOW(), '%Y-%m-01')";
+          loginDateCond = "(u.last_login >= DATE_FORMAT(NOW(), '%Y-%m-01') OR u.last_active >= DATE_FORMAT(NOW(), '%Y-%m-01'))";
         } else if (timeFilter === "Last Month") {
-          createdDateCond = "u.created_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.created_date < DATE_FORMAT(NOW(), '%Y-%m-01')";
-          lastLoginCond = "((u.last_login >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.last_login < DATE_FORMAT(NOW(), '%Y-%m-01')) OR (u.last_active >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.last_active < DATE_FORMAT(NOW(), '%Y-%m-01')))";
-          dateCondition = " AND ((u.created_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.created_date < DATE_FORMAT(NOW(), '%Y-%m-01')) OR (u.last_login >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.last_login < DATE_FORMAT(NOW(), '%Y-%m-01')) OR (u.last_active >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.last_active < DATE_FORMAT(NOW(), '%Y-%m-01')))";
+          regDateCond = "u.created_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.created_date < DATE_FORMAT(NOW(), '%Y-%m-01')";
+          loginDateCond = "((u.last_login >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.last_login < DATE_FORMAT(NOW(), '%Y-%m-01')) OR (u.last_active >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 1 MONTH), '%Y-%m-01') AND u.last_active < DATE_FORMAT(NOW(), '%Y-%m-01')))";
         } else if (timeFilter === "This Quarter") {
-          createdDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
-          lastLoginCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 3 MONTH) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 3 MONTH))";
-          dateCondition = " AND (u.created_date >= DATE_SUB(NOW(), INTERVAL 3 MONTH) OR u.last_login >= DATE_SUB(NOW(), INTERVAL 3 MONTH) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 3 MONTH))";
+          regDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
+          loginDateCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 3 MONTH) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 3 MONTH))";
         } else if (timeFilter === "This Year") {
-          createdDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 1 YEAR)";
-          lastLoginCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 1 YEAR) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 1 YEAR))";
-          dateCondition = " AND (u.created_date >= DATE_SUB(NOW(), INTERVAL 1 YEAR) OR u.last_login >= DATE_SUB(NOW(), INTERVAL 1 YEAR) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 1 YEAR))";
+          regDateCond = "u.created_date >= DATE_SUB(NOW(), INTERVAL 1 YEAR)";
+          loginDateCond = "(u.last_login >= DATE_SUB(NOW(), INTERVAL 1 YEAR) OR u.last_active >= DATE_SUB(NOW(), INTERVAL 1 YEAR))";
+        } else {
+          hasDateFilter = false;
         }
       }
 
-      if (dateCondition) {
-        baseWhere += dateCondition;
-        baseParams.push(...dateParams);
+      // 2. Fast global stats query using indexed columns directly from users table
+      let stats = { total: 0, active: 0, pending: 0, new_registered: 0, last_login: 0, completed: 0, uncompleted: 0 };
+      if (hasDateFilter) {
+        const statsQuery1 = `
+          SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
+            SUM(CASE WHEN is_active = 0 OR is_active IS NULL THEN 1 ELSE 0 END) as pending,
+            COUNT(*) as new_registered,
+            SUM(CASE WHEN profile_completion >= 80 THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN profile_completion < 80 THEN 1 ELSE 0 END) as uncompleted
+          FROM users u
+          ${baseWhere} AND (${regDateCond})
+        `;
+        const statsQuery2 = `
+          SELECT COUNT(*) as last_login
+          FROM users u
+          ${baseWhere} AND (${loginDateCond})
+        `;
+        const [[res1], [res2]] = await Promise.all([
+          pool.query(statsQuery1, [...baseParams, ...regDateParams]),
+          pool.query(statsQuery2, [...baseParams, ...loginDateParams])
+        ]);
+        const r1 = res1[0] || {};
+        const r2 = res2[0] || {};
+        stats = {
+          total: Number(r1.total || 0),
+          active: Number(r1.active || 0),
+          pending: Number(r1.pending || 0),
+          new_registered: Number(r1.new_registered || 0),
+          last_login: Number(r2.last_login || 0),
+          completed: Number(r1.completed || 0),
+          uncompleted: Number(r1.uncompleted || 0)
+        };
+      } else {
+        const statsQuery = `
+          SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
+            SUM(CASE WHEN is_active = 0 OR is_active IS NULL THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as new_registered,
+            SUM(CASE WHEN u.last_login IS NOT NULL OR u.last_active IS NOT NULL THEN 1 ELSE 0 END) as last_login,
+            SUM(CASE WHEN profile_completion >= 80 THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN profile_completion < 80 THEN 1 ELSE 0 END) as uncompleted
+          FROM users u
+          ${baseWhere}
+        `;
+        const [statsResult] = await pool.query(statsQuery, baseParams);
+        const r = statsResult[0] || {};
+        stats = {
+          total: Number(r.total || 0),
+          active: Number(r.active || 0),
+          pending: Number(r.pending || 0),
+          new_registered: Number(r.new_registered || 0),
+          last_login: Number(r.last_login || 0),
+          completed: Number(r.completed || 0),
+          uncompleted: Number(r.uncompleted || 0)
+        };
       }
 
-      // 1. Fast global stats query using indexed columns directly from users table
-      const statsQuery = `
-        SELECT 
-          COUNT(*) as total,
-          SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
-          SUM(CASE WHEN is_active = 0 OR is_active IS NULL THEN 1 ELSE 0 END) as pending,
-          SUM(CASE WHEN ${createdDateCond} THEN 1 ELSE 0 END) as new_registered,
-          SUM(CASE WHEN ${lastLoginCond} THEN 1 ELSE 0 END) as last_login,
-          SUM(CASE WHEN profile_completion >= 80 THEN 1 ELSE 0 END) as completed,
-          SUM(CASE WHEN profile_completion < 80 THEN 1 ELSE 0 END) as uncompleted
-        FROM users u
-        ${baseWhere}
-      `;
-      const [statsResult] = await pool.query(statsQuery, [...selectDateParams, ...baseParams]);
-      const stats = statsResult[0] || { total: 0, active: 0, pending: 0, new_registered: 0, last_login: 0, completed: 0, uncompleted: 0 };
-
-      // 2. Build filtered WHERE clause
+      // 3. Build filtered WHERE clause for current tab
       let filterWhere = baseWhere;
       let filterParams = [...baseParams];
 
       if (status === 'Active') {
         filterWhere += ` AND u.is_active = 1`;
+        if (hasDateFilter) {
+          filterWhere += ` AND (${regDateCond})`;
+          filterParams.push(...regDateParams);
+        }
       } else if (status === 'Pending' || status === 'Disabled') {
         filterWhere += ` AND (u.is_active = 0 OR u.is_active IS NULL)`;
+        if (hasDateFilter) {
+          filterWhere += ` AND (${regDateCond})`;
+          filterParams.push(...regDateParams);
+        }
       } else if (status === 'Complete' || status === 'Completed') {
         filterWhere += ` AND u.profile_completion >= 80`;
+        if (hasDateFilter) {
+          filterWhere += ` AND (${regDateCond})`;
+          filterParams.push(...regDateParams);
+        }
       } else if (status === 'Uncompleted' || status === 'Incomplete') {
         filterWhere += ` AND u.profile_completion < 80`;
+        if (hasDateFilter) {
+          filterWhere += ` AND (${regDateCond})`;
+          filterParams.push(...regDateParams);
+        }
       } else if (status === 'New Registered' || status === 'Recent' || status === 'Recently Registered' || status === 'Registered') {
-        filterWhere += ` AND (${createdDateCond})`;
-        if (startDate && endDate) {
-          filterParams.push(startDate, endDate);
-        } else if (startDate) {
-          filterParams.push(startDate);
-        } else if (endDate) {
-          filterParams.push(endDate);
+        if (hasDateFilter) {
+          filterWhere += ` AND (${regDateCond})`;
+          filterParams.push(...regDateParams);
+        } else {
+          filterWhere += ` AND (u.created_date >= DATE_SUB(NOW(), INTERVAL 30 DAY))`;
         }
       } else if (status === 'Last Login' || status === 'Login') {
-        filterWhere += ` AND (${lastLoginCond})`;
-        if (startDate && endDate) {
-          filterParams.push(startDate, endDate, startDate, endDate);
-        } else if (startDate) {
-          filterParams.push(startDate, startDate);
-        } else if (endDate) {
-          filterParams.push(endDate, endDate);
+        if (hasDateFilter) {
+          filterWhere += ` AND (${loginDateCond})`;
+          filterParams.push(...loginDateParams);
+        } else {
+          filterWhere += ` AND (u.last_login IS NOT NULL OR u.last_active IS NOT NULL)`;
+        }
+      } else {
+        // All Candidates tab
+        if (hasDateFilter) {
+          filterWhere += ` AND (${regDateCond})`;
+          filterParams.push(...regDateParams);
         }
       }
 

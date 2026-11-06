@@ -226,6 +226,181 @@ const getSalaryType = async (request, response) => {
   }
 };
 
+const isTruthyFlag = (val) => {
+  if (val === 1 || val === true || val === '1') return true;
+  if (val && typeof val === 'object' && val.data && val.data[0] === 1) return true;
+  if (Buffer.isBuffer(val) && val[0] === 1) return true;
+  return false;
+};
+
+const checkUserAutoApprove = async (userId, effectiveRecruiterId = null) => {
+  const targetId = userId || effectiveRecruiterId;
+  if (!targetId) return false;
+
+  try {
+    const [userRows] = await pool.query(
+      `SELECT u.id, u.auto_approve, u.role_id, u.company_id, u.organization, u.master_recruiter_id,
+              c.auto_approve AS company_auto_approve,
+              mu.auto_approve AS master_auto_approve
+       FROM users u
+       LEFT JOIN companies c ON (u.company_id = c.id OR (u.organization IS NOT NULL AND u.organization != '' AND c.name = u.organization))
+       LEFT JOIN users mu ON u.master_recruiter_id = mu.id
+       WHERE u.id = ?`,
+      [targetId]
+    );
+
+    const u = userRows[0] || {};
+    if (u.role_id === 1) return true;
+    if (isTruthyFlag(u.auto_approve)) return true;
+    if (isTruthyFlag(u.company_auto_approve)) return true;
+    if (isTruthyFlag(u.master_auto_approve)) return true;
+
+    if (effectiveRecruiterId && effectiveRecruiterId !== targetId) {
+      const [effRows] = await pool.query(`SELECT auto_approve, role_id FROM users WHERE id = ?`, [effectiveRecruiterId]);
+      if (effRows[0]?.role_id === 1 || isTruthyFlag(effRows[0]?.auto_approve)) return true;
+    }
+
+    const companyId = u.company_id;
+    const organization = u.organization;
+    if (companyId || organization) {
+      const [compRecruiters] = await pool.query(
+        `SELECT auto_approve FROM users 
+         WHERE role_id = 3 
+           AND (
+             (company_id = ? AND ? IS NOT NULL AND ? > 0) OR 
+             (organization = ? AND ? IS NOT NULL AND organization != '')
+           )`,
+        [companyId, companyId, companyId, organization, organization]
+      );
+      for (const cr of compRecruiters) {
+        if (isTruthyFlag(cr.auto_approve)) return true;
+      }
+
+      try {
+        const [compRows] = await pool.query(
+          `SELECT auto_approve FROM companies 
+           WHERE (id = ? AND ? IS NOT NULL AND ? > 0) OR (name = ? AND ? IS NOT NULL AND name != '')`,
+          [companyId, companyId, companyId, organization, organization]
+        );
+        if (compRows[0] && isTruthyFlag(compRows[0].auto_approve)) return true;
+      } catch (e) {}
+    }
+
+    return false;
+  } catch (err) {
+    console.error("Error checking auto approve:", err);
+    return false;
+  }
+};
+
+const syncPendingAutoApproveJobs = async () => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT u.id 
+       FROM users u
+       LEFT JOIN companies c ON (u.company_id = c.id OR (u.organization IS NOT NULL AND u.organization != '' AND c.name = u.organization))
+       LEFT JOIN users pu ON (
+         pu.role_id = 3 AND (
+           (pu.company_id = u.company_id AND u.company_id IS NOT NULL AND u.company_id > 0) OR 
+           (pu.organization = u.organization AND u.organization IS NOT NULL AND u.organization != '')
+         )
+       )
+       WHERE u.role_id = 1
+          OR u.auto_approve = 1 OR u.auto_approve = '1'
+          OR c.auto_approve = 1 OR c.auto_approve = '1'
+          OR pu.auto_approve = 1 OR pu.auto_approve = '1'`
+    );
+
+    const userIds = (rows || []).map(r => r.id).filter(Boolean);
+    if (userIds.length > 0) {
+      const [updateResult] = await pool.query(
+        `UPDATE job_post 
+         SET approval_status = 'approved', approved_at = NOW() 
+         WHERE user_id IN (?) 
+           AND (approval_status = 'pending' OR approval_status IS NULL) 
+           AND (is_closed = 0 OR is_closed IS NULL)`,
+        [userIds]
+      );
+      if (updateResult.affectedRows > 0) {
+        console.log(`✅ [Auto-Approve Sync] Automatically approved ${updateResult.affectedRows} pending jobs for auto-approved accounts.`);
+      }
+      return updateResult.affectedRows || 0;
+    }
+    return 0;
+  } catch (err) {
+    console.error("⚠️ [Auto-Approve Sync Error]:", err.message);
+    return 0;
+  }
+};
+
+const getUserEffectivePlanLimit = async (userId) => {
+  if (!userId) return { planName: 'Basic', activeLimit: 3, isSuperAdmin: false };
+
+  const [uRows] = await pool.query(
+    `SELECT u.id, u.role_id, u.company_id, u.organization, u.master_recruiter_id
+     FROM users u WHERE u.id = ?`,
+    [userId]
+  );
+  const u = uRows[0] || {};
+  if (u.role_id === 1) return { planName: 'Unlimited (Admin)', activeLimit: 0, isSuperAdmin: true };
+
+  // 1. Direct subscription
+  let [subRows] = await pool.query(
+    `SELECT sp.name AS plan_name, sp.active_job_limit
+     FROM recruiter_subscriptions rs
+     JOIN subscription_plans sp ON rs.plan_id = sp.id
+     WHERE rs.recruiter_id = ? AND rs.status = 'Active'
+     ORDER BY rs.id DESC LIMIT 1`,
+    [userId]
+  );
+
+  // 2. Company ID subscription
+  if ((!subRows || subRows.length === 0) && u.company_id) {
+    [subRows] = await pool.query(
+      `SELECT sp.name AS plan_name, sp.active_job_limit
+       FROM recruiter_subscriptions rs
+       JOIN subscription_plans sp ON rs.plan_id = sp.id
+       WHERE rs.company_id = ? AND rs.status = 'Active'
+       ORDER BY rs.id DESC LIMIT 1`,
+      [u.company_id]
+    );
+  }
+
+  // 3. Primary / Master recruiter subscription under same company
+  if ((!subRows || subRows.length === 0) && (u.company_id || u.organization)) {
+    [subRows] = await pool.query(
+      `SELECT sp.name AS plan_name, sp.active_job_limit
+       FROM recruiter_subscriptions rs
+       JOIN subscription_plans sp ON rs.plan_id = sp.id
+       JOIN users pu ON rs.recruiter_id = pu.id
+       WHERE pu.role_id = 3
+         AND rs.status = 'Active'
+         AND (
+           (pu.company_id = ? AND ? IS NOT NULL AND ? > 0) OR
+           (pu.organization = ? AND ? IS NOT NULL AND pu.organization != '')
+         )
+       ORDER BY rs.id DESC LIMIT 1`,
+      [u.company_id, u.company_id, u.company_id, u.organization, u.organization]
+    );
+  }
+
+  // 4. Master recruiter subscription (if sub-recruiter)
+  if ((!subRows || subRows.length === 0) && u.master_recruiter_id) {
+    [subRows] = await pool.query(
+      `SELECT sp.name AS plan_name, sp.active_job_limit
+       FROM recruiter_subscriptions rs
+       JOIN subscription_plans sp ON rs.plan_id = sp.id
+       WHERE rs.recruiter_id = ? AND rs.status = 'Active'
+       ORDER BY rs.id DESC LIMIT 1`,
+      [u.master_recruiter_id]
+    );
+  }
+
+  const planName = subRows[0]?.plan_name || 'Basic';
+  const activeLimit = subRows[0]?.active_job_limit !== undefined ? Number(subRows[0].active_job_limit) : 3;
+  return { planName, activeLimit, isSuperAdmin: false };
+};
+
 const jobPosting = async (request, response) => {
   // 🔍 Validate request body exists
   if (!request.body || Object.keys(request.body).length === 0) {
@@ -512,35 +687,17 @@ const jobPosting = async (request, response) => {
       await SubRecruiterModel.incrementSubRecruiterUsage(recruiterUserId, 'job_post');
     }
 
-    // Auto Approve Logic (Checks user, master recruiter, and parent company)
+    // Auto Approve Logic (Checks user, master recruiter, peer masters, and parent company)
     const postingUserId = recruiterUserId || user_id;
-    const [userRows] = await pool.query(
-      `SELECT u.auto_approve, u.role_id, u.company_id, u.organization, u.master_recruiter_id,
-              c.auto_approve AS company_auto_approve,
-              mu.auto_approve AS master_auto_approve
-       FROM users u
-       LEFT JOIN companies c ON (u.company_id = c.id OR (u.organization IS NOT NULL AND u.organization != '' AND c.name = u.organization))
-       LEFT JOIN users mu ON u.master_recruiter_id = mu.id
-       WHERE u.id = ?`,
-      [postingUserId]
-    );
-
-    const uRecord = userRows[0] || {};
-    let isAutoApprove = uRecord.auto_approve === 1 ||
-                        uRecord.role_id === 1 ||
-                        uRecord.company_auto_approve === 1 ||
-                        uRecord.master_auto_approve === 1;
-
-    if (!isAutoApprove && effectiveRecruiterId && effectiveRecruiterId !== postingUserId) {
-      const [effRows] = await pool.query(`SELECT auto_approve, role_id FROM users WHERE id = ?`, [effectiveRecruiterId]);
-      if (effRows[0]?.auto_approve === 1 || effRows[0]?.role_id === 1) {
-        isAutoApprove = true;
-      }
-    }
+    const isAutoApprove = await checkUserAutoApprove(postingUserId, effectiveRecruiterId);
 
     const insertedJobId = result?.insertId || (typeof result === 'number' ? result : null);
-    if (isAutoApprove && insertedJobId) {
-      await pool.query(`UPDATE job_post SET approval_status = 'approved', approved_at = NOW() WHERE id = ?`, [insertedJobId]);
+    if (isAutoApprove) {
+      if (insertedJobId) {
+        await pool.query(`UPDATE job_post SET approval_status = 'approved', approved_at = NOW() WHERE id = ?`, [insertedJobId]);
+      }
+      // Also ensure any pending jobs by this recruiter/company are automatically approved
+      await syncPendingAutoApproveJobs();
     }
 
     return response.status(201).send({
@@ -2461,6 +2618,10 @@ const batchEnrichJobsWithRecruiterInfo = async (rawList) => {
 
 const getPendingJobs = async (request, response) => {
   const { limit, page, search, start_date, end_date } = request.query;
+
+  // 1. Auto-approve any pending jobs whose recruiter, company, or peer master has auto_approve enabled
+  await syncPendingAutoApproveJobs();
+
   const filters = {
     limit: limit ? parseInt(limit) : 20,
     page: page ? parseInt(page) : 1,
@@ -2506,37 +2667,22 @@ const approveJob = async (request, response) => {
     const job = jobRows[0];
     const recruiterUserId = job.user_id;
 
-    // 2. Enforce active job limit for recruiter
+    // 2. Enforce active job limit for recruiter using company-aware resolver
     if (recruiterUserId) {
-      const [userRows] = await pool.query("SELECT role_id FROM users WHERE id = ?", [recruiterUserId]);
-      const isSuperAdmin = userRows[0]?.role_id === 1;
+      const planInfo = await getUserEffectivePlanLimit(recruiterUserId);
 
-      if (!isSuperAdmin) {
-        const [subRows] = await pool.query(
-          `SELECT sp.name AS plan_name, sp.active_job_limit
-           FROM recruiter_subscriptions rs
-           JOIN subscription_plans sp ON rs.plan_id = sp.id
-           WHERE rs.recruiter_id = ?
-           ORDER BY rs.id DESC LIMIT 1`,
+      if (!planInfo.isSuperAdmin && planInfo.activeLimit > 0) {
+        const [activeCountRows] = await pool.query(
+          `SELECT COUNT(*) AS count FROM job_post WHERE user_id = ? AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
           [recruiterUserId]
         );
+        const activeJobsCount = activeCountRows[0]?.count || 0;
 
-        const planName = subRows[0]?.plan_name || 'Basic';
-        const activeLimit = subRows[0]?.active_job_limit !== undefined ? subRows[0].active_job_limit : 3;
-
-        if (activeLimit > 0) {
-          const [activeCountRows] = await pool.query(
-            `SELECT COUNT(*) AS count FROM job_post WHERE user_id = ? AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
-            [recruiterUserId]
-          );
-          const activeJobsCount = activeCountRows[0]?.count || 0;
-
-          if (activeJobsCount >= activeLimit) {
-            return response.status(400).send({
-              message: "Active Job Limit Reached",
-              details: `Cannot approve job: Recruiter "${job.company_name || 'Recruiter'}" has reached their ${planName} Plan active limit (${activeJobsCount}/${activeLimit} active slots used). The recruiter must upgrade their plan or close an existing active job before this job can be approved.`
-            });
-          }
+        if (activeJobsCount >= planInfo.activeLimit) {
+          return response.status(400).send({
+            message: "Active Job Limit Reached",
+            details: `Cannot approve job: Recruiter "${job.company_name || 'Recruiter'}" has reached their ${planInfo.planName} Plan active limit (${activeJobsCount}/${planInfo.activeLimit} active slots used). The recruiter must upgrade their plan or close an existing active job before this job can be approved.`
+          });
         }
       }
     }
@@ -2626,13 +2772,16 @@ const rejectJob = async (request, response) => {
 
 const approveAllJobs = async (request, response) => {
   try {
+    // 1. First sync any pending jobs for auto-approved accounts
+    await syncPendingAutoApproveJobs();
+
     const [pendingJobs] = await pool.query(
       `SELECT id, user_id, job_title, company_name FROM job_post WHERE approval_status = 'pending' AND (is_closed = 0 OR is_closed IS NULL)`
     );
 
     if (!pendingJobs || pendingJobs.length === 0) {
       return response.status(200).send({
-        message: "No pending jobs to approve",
+        message: "All eligible pending jobs approved successfully",
         approvedCount: 0,
         skippedCount: 0
       });
@@ -2647,44 +2796,29 @@ const approveAllJobs = async (request, response) => {
       const recruiterUserId = job.user_id;
 
       if (recruiterUserId) {
-        const [userRows] = await pool.query("SELECT role_id FROM users WHERE id = ?", [recruiterUserId]);
-        const isSuperAdmin = userRows[0]?.role_id === 1;
+        const planInfo = await getUserEffectivePlanLimit(recruiterUserId);
 
-        if (!isSuperAdmin) {
-          const [subRows] = await pool.query(
-            `SELECT sp.name AS plan_name, sp.active_job_limit
-             FROM recruiter_subscriptions rs
-             JOIN subscription_plans sp ON rs.plan_id = sp.id
-             WHERE rs.recruiter_id = ?
-             ORDER BY rs.id DESC LIMIT 1`,
-            [recruiterUserId]
-          );
-
-          const planName = subRows[0]?.plan_name || 'Basic';
-          const activeLimit = subRows[0]?.active_job_limit !== undefined ? subRows[0].active_job_limit : 3;
-
-          if (activeLimit > 0) {
-            if (recruiterActiveCounts[recruiterUserId] === undefined) {
-              const [activeCountRows] = await pool.query(
-                `SELECT COUNT(*) AS count FROM job_post WHERE user_id = ? AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
-                [recruiterUserId]
-              );
-              recruiterActiveCounts[recruiterUserId] = activeCountRows[0]?.count || 0;
-            }
-
-            if (recruiterActiveCounts[recruiterUserId] >= activeLimit) {
-              skippedCount++;
-              skippedJobs.push({
-                id: job.id,
-                title: job.job_title,
-                company: job.company_name,
-                reason: `Limit reached (${recruiterActiveCounts[recruiterUserId]}/${activeLimit})`
-              });
-              continue;
-            }
-
-            recruiterActiveCounts[recruiterUserId]++;
+        if (!planInfo.isSuperAdmin && planInfo.activeLimit > 0) {
+          if (recruiterActiveCounts[recruiterUserId] === undefined) {
+            const [activeCountRows] = await pool.query(
+              `SELECT COUNT(*) AS count FROM job_post WHERE user_id = ? AND (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved'`,
+              [recruiterUserId]
+            );
+            recruiterActiveCounts[recruiterUserId] = activeCountRows[0]?.count || 0;
           }
+
+          if (recruiterActiveCounts[recruiterUserId] >= planInfo.activeLimit) {
+            skippedCount++;
+            skippedJobs.push({
+              id: job.id,
+              title: job.job_title,
+              company: job.company_name,
+              reason: `Limit reached (${recruiterActiveCounts[recruiterUserId]}/${planInfo.activeLimit})`
+            });
+            continue;
+          }
+
+          recruiterActiveCounts[recruiterUserId]++;
         }
       }
 
