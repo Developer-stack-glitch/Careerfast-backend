@@ -101,6 +101,9 @@ async function ensureDatabaseIndexes() {
     await ensureColumn("job_post", "variable_format", "VARCHAR(50) NULL");
     await ensureColumn("job_post", "bonus_amount", "DECIMAL(10,2) NULL");
     await ensureColumn("job_post", "bonus_format", "VARCHAR(50) NULL");
+    await ensureColumn("job_post", "expire_in_months", "INT NULL DEFAULT 1");
+    await ensureColumn("job_post", "expires_at", "DATETIME NULL");
+    await ensureIndex("job_post", "idx_job_post_expires_at", "expires_at");
 
     // subscription_plans columns
     await ensureColumn("subscription_plans", "email_limit", "INT NOT NULL DEFAULT 50");

@@ -461,7 +461,12 @@ const jobPosting = async (request, response) => {
     internship_start_type,
     internship_start_date,
     last_date_to_apply, locality, internship_perks,
+    expire_in_months,
   } = request.body;
+
+  const validExpireMonths = [1, 2, 3, 4, 5, 6].includes(Number(expire_in_months))
+    ? Number(expire_in_months)
+    : 1;
 
   // 🧹 Clean the openings field
   openings = openings && !isNaN(openings) ? parseInt(openings, 10) : null;
@@ -671,7 +676,8 @@ const jobPosting = async (request, response) => {
       stipend_amount,
       internship_start_type,
       internship_start_date,
-      last_date_to_apply
+      last_date_to_apply,
+      validExpireMonths
     );
 
     // Increment monthly job posts used upon successful posting
@@ -2240,7 +2246,12 @@ const updateJobPosting = async (request, response) => {
     internship_start_type,
     internship_start_date,
     last_date_to_apply,
+    expire_in_months,
   } = request.body;
+
+  const validExpireMonths = [1, 2, 3, 4, 5, 6].includes(Number(expire_in_months))
+    ? Number(expire_in_months)
+    : null;
 
   openings = openings && !isNaN(openings) ? parseInt(openings, 10) : null;
 
@@ -2358,7 +2369,8 @@ const updateJobPosting = async (request, response) => {
       venue_address,
       google_maps_url,
       team_members,
-      apply_link
+      apply_link,
+      validExpireMonths
     );
 
     return response.status(200).send({

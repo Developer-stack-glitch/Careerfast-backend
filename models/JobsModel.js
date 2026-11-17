@@ -263,9 +263,13 @@ const JobsModel = {
     stipend_amount,
     internship_start_type,
     internship_start_date,
-    last_date_to_apply
+    last_date_to_apply,
+    expire_in_months = 1
   ) => {
     try {
+      const validMonths = [1, 2, 3, 4, 5, 6].includes(Number(expire_in_months)) ? Number(expire_in_months) : 1;
+      const expiresAt = dayjs().add(validMonths, 'month').format('YYYY-MM-DD HH:mm:ss');
+
       const query = `
       INSERT INTO job_post (
         user_id,
@@ -316,8 +320,10 @@ const JobsModel = {
         stipend_amount,
         internship_start_type,
         internship_start_date,
-        last_date_to_apply
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        last_date_to_apply,
+        expire_in_months,
+        expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
       const values = [
@@ -369,7 +375,9 @@ const JobsModel = {
         stipend_amount,
         internship_start_type,
         internship_start_date,
-        last_date_to_apply
+        last_date_to_apply,
+        validMonths,
+        expiresAt
       ];
 
       // Insert new categories into job_categories table if they don't exist
@@ -479,9 +487,12 @@ const JobsModel = {
     venue_address,
     google_maps_url,
     team_members,
-    apply_link
+    apply_link,
+    expire_in_months = null
   ) => {
     try {
+      const validExpireMonths = [1, 2, 3, 4, 5, 6].includes(Number(expire_in_months)) ? Number(expire_in_months) : null;
+
       const query = `
       UPDATE job_post SET
         company_name = ?,
@@ -526,7 +537,12 @@ const JobsModel = {
         venue_address = ?,
         google_maps_url = ?,
         team_members = ?,
-        apply_link = ?
+        apply_link = ?,
+        expire_in_months = COALESCE(?, expire_in_months),
+        expires_at = CASE 
+          WHEN ? IS NOT NULL THEN DATE_ADD(COALESCE(created_at, NOW()), INTERVAL ? MONTH)
+          ELSE expires_at 
+        END
       WHERE id = ?
     `;
 
@@ -574,6 +590,9 @@ const JobsModel = {
         google_maps_url,
         JSON.stringify(team_members),
         apply_link,
+        validExpireMonths,
+        validExpireMonths,
+        validExpireMonths,
         job_post_id
       ];
 
@@ -923,16 +942,16 @@ const JobsModel = {
       if (statuses && statuses.length > 0) {
         const statusConditions = [];
         if (statuses.includes('active')) {
-          statusConditions.push(`((job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND job_post.approval_status = 'approved')`);
+          statusConditions.push(`((job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND (job_post.expires_at IS NULL OR job_post.expires_at > NOW()) AND job_post.approval_status = 'approved')`);
         }
         if (statuses.includes('pending')) {
-          statusConditions.push(`((job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND (job_post.approval_status = 'pending' OR job_post.approval_status IS NULL))`);
+          statusConditions.push(`((job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND (job_post.expires_at IS NULL OR job_post.expires_at > NOW()) AND (job_post.approval_status = 'pending' OR job_post.approval_status IS NULL))`);
         }
         if (statuses.includes('closed') || statuses.includes('expired')) {
-          statusConditions.push(`(job_post.is_closed = 1)`);
+          statusConditions.push(`(job_post.is_closed = 1 OR (job_post.expires_at IS NOT NULL AND job_post.expires_at <= NOW()))`);
         }
         if (statuses.includes('rejected')) {
-          statusConditions.push(`((job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND job_post.approval_status = 'rejected')`);
+          statusConditions.push(`((job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND (job_post.expires_at IS NULL OR job_post.expires_at > NOW()) AND job_post.approval_status = 'rejected')`);
         }
 
         if (statusConditions.length > 0) {
@@ -963,6 +982,7 @@ const JobsModel = {
     job_post.*, 
     CASE 
       WHEN job_post.is_closed = 1 THEN 1 
+      WHEN job_post.expires_at IS NOT NULL AND job_post.expires_at <= NOW() THEN 1
       ELSE 0 
     END AS is_closed,
     COUNT(DISTINCT aj.id) AS candidates_count,
@@ -998,8 +1018,10 @@ const JobsModel = {
       };
 
       const formatResult = result.map((item) => {
+        const isActuallyClosed = item.is_closed === 1 || (item.expires_at && new Date(item.expires_at) <= new Date());
         return {
           ...item,
+          is_closed: isActuallyClosed ? 1 : 0,
           date_posted: dayjs(item.created_at).local().from(now),
           duration_period: safeParse(item.duration_period),
           work_location: safeParse(item.work_location),
@@ -1021,10 +1043,10 @@ const JobsModel = {
       if (role_id === 1) {
         statsQuery = `
           SELECT 
-            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved' THEN 1 ELSE 0 END) as openJobs,
-            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) as pendingJobs,
-            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'rejected' THEN 1 ELSE 0 END) as rejectedJobs,
-            SUM(CASE WHEN is_closed = 1 THEN 1 ELSE 0 END) as closedJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (expires_at IS NULL OR expires_at > NOW()) AND approval_status = 'approved' THEN 1 ELSE 0 END) as openJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (expires_at IS NULL OR expires_at > NOW()) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) as pendingJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (expires_at IS NULL OR expires_at > NOW()) AND approval_status = 'rejected' THEN 1 ELSE 0 END) as rejectedJobs,
+            SUM(CASE WHEN is_closed = 1 OR (expires_at IS NOT NULL AND expires_at <= NOW()) THEN 1 ELSE 0 END) as closedJobs,
             SUM(CASE WHEN LOWER(job_nature) != 'internship' OR job_nature IS NULL THEN 1 ELSE 0 END) as jobsCount,
             SUM(CASE WHEN LOWER(job_nature) = 'internship' THEN 1 ELSE 0 END) as internshipsCount,
             (SELECT COUNT(*) FROM applied_jobs) as totalApplications
@@ -1033,10 +1055,10 @@ const JobsModel = {
       } else {
         statsQuery = `
           SELECT 
-            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved' THEN 1 ELSE 0 END) as openJobs,
-            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) as pendingJobs,
-            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'rejected' THEN 1 ELSE 0 END) as rejectedJobs,
-            SUM(CASE WHEN is_closed = 1 THEN 1 ELSE 0 END) as closedJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (expires_at IS NULL OR expires_at > NOW()) AND approval_status = 'approved' THEN 1 ELSE 0 END) as openJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (expires_at IS NULL OR expires_at > NOW()) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) as pendingJobs,
+            SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (expires_at IS NULL OR expires_at > NOW()) AND approval_status = 'rejected' THEN 1 ELSE 0 END) as rejectedJobs,
+            SUM(CASE WHEN is_closed = 1 OR (expires_at IS NOT NULL AND expires_at <= NOW()) THEN 1 ELSE 0 END) as closedJobs,
             SUM(CASE WHEN LOWER(job_nature) != 'internship' OR job_nature IS NULL THEN 1 ELSE 0 END) as jobsCount,
             SUM(CASE WHEN LOWER(job_nature) = 'internship' THEN 1 ELSE 0 END) as internshipsCount,
             (SELECT COUNT(*) FROM applied_jobs aj JOIN job_post jp2 ON aj.postId = jp2.id WHERE jp2.user_id = ?) as totalApplications
@@ -1270,7 +1292,13 @@ const JobsModel = {
                       job_post.approval_status,
                       job_post.approved_at,
                       job_post.rejection_reason,
-                      job_post.is_closed,
+                      job_post.expire_in_months,
+                      job_post.expires_at,
+                      CASE 
+                          WHEN job_post.is_closed = 1 THEN 1
+                          WHEN job_post.expires_at IS NOT NULL AND job_post.expires_at <= NOW() THEN 1
+                          ELSE 0
+                      END AS is_closed,
                       (SELECT COUNT(*) FROM applied_jobs WHERE applied_jobs.postId = job_post.id) AS applicants_count
                   FROM
                       job_post
@@ -1295,15 +1323,13 @@ const JobsModel = {
 
       // Status filter
       if (filters.status) {
-        const daysThreshold = filters.days || 15; // Default to 15 if `filters.days` is undefined
-
         if (filters.status === "Live") {
           whereClauses.push(
-            `DATEDIFF(NOW(), job_post.created_at) BETWEEN -${daysThreshold} AND ${daysThreshold}`
+            `(job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND (job_post.expires_at IS NULL OR job_post.expires_at > NOW())`
           );
         } else if (filters.status === "Expired") {
           whereClauses.push(
-            `DATEDIFF(NOW(), job_post.created_at) < -${daysThreshold} OR DATEDIFF(NOW(), job_post.created_at) > ${daysThreshold}`
+            `(job_post.is_closed = 1 OR (job_post.expires_at IS NOT NULL AND job_post.expires_at <= NOW()))`
           );
         }
       }
@@ -1499,9 +1525,9 @@ const JobsModel = {
 
       if (filters.is_closed !== undefined && filters.is_closed !== null && filters.is_closed !== '') {
         if (Number(filters.is_closed) === 0) {
-          whereClauses.push(`(job_post.is_closed = 0 OR job_post.is_closed IS NULL)`);
+          whereClauses.push(`(job_post.is_closed = 0 OR job_post.is_closed IS NULL) AND (job_post.expires_at IS NULL OR job_post.expires_at > NOW())`);
         } else {
-          whereClauses.push(`job_post.is_closed = 1`);
+          whereClauses.push(`(job_post.is_closed = 1 OR (job_post.expires_at IS NOT NULL AND job_post.expires_at <= NOW()))`);
         }
       }
 

@@ -51,7 +51,13 @@ const HrDashboardController = {
 
       // 3. Real jobs posted by recruiter
       const [jobRows] = await pool.query(
-        `SELECT jp.id, jp.job_title, jp.company_name, jp.work_location, jp.openings, jp.is_closed, jp.approval_status, jp.rejection_reason, jp.created_at, jp.min_salary, jp.max_salary, COALESCE(jp.views_count, 0) as views_count,
+        `SELECT jp.id, jp.job_title, jp.company_name, jp.work_location, jp.openings,
+                CASE 
+                  WHEN jp.is_closed = 1 THEN 1 
+                  WHEN jp.expires_at IS NOT NULL AND jp.expires_at <= NOW() THEN 1 
+                  ELSE 0 
+                END as is_closed,
+                jp.approval_status, jp.rejection_reason, jp.created_at, jp.expire_in_months, jp.expires_at, jp.min_salary, jp.max_salary, COALESCE(jp.views_count, 0) as views_count,
                 (SELECT COUNT(*) FROM applied_jobs aj WHERE aj.postId = jp.id) as applications_count
          FROM job_post jp 
          WHERE jp.user_id = ? 
@@ -222,10 +228,10 @@ const HrDashboardController = {
       const [companyJobCountsResult] = await pool.query(
         `SELECT 
            COUNT(*) AS total_jobs,
-           SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved' THEN 1 ELSE 0 END) AS active_jobs,
-           SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) AS pending_jobs,
+           SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (expires_at IS NULL OR expires_at > NOW()) AND approval_status = 'approved' THEN 1 ELSE 0 END) AS active_jobs,
+           SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (expires_at IS NULL OR expires_at > NOW()) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) AS pending_jobs,
            SUM(CASE WHEN approval_status = 'rejected' THEN 1 ELSE 0 END) AS rejected_jobs,
-           SUM(CASE WHEN is_closed = 1 THEN 1 ELSE 0 END) AS closed_jobs
+           SUM(CASE WHEN is_closed = 1 OR (expires_at IS NOT NULL AND expires_at <= NOW()) THEN 1 ELSE 0 END) AS closed_jobs
          FROM job_post 
          WHERE user_id IN (?)`,
         [companyRecruiterIds]
@@ -240,10 +246,10 @@ const HrDashboardController = {
       const [personalJobCountsResult] = await pool.query(
         `SELECT 
            COUNT(*) AS total_jobs,
-           SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND approval_status = 'approved' THEN 1 ELSE 0 END) AS active_jobs,
-           SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) AS pending_jobs,
+           SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (expires_at IS NULL OR expires_at > NOW()) AND approval_status = 'approved' THEN 1 ELSE 0 END) AS active_jobs,
+           SUM(CASE WHEN (is_closed = 0 OR is_closed IS NULL) AND (expires_at IS NULL OR expires_at > NOW()) AND (approval_status = 'pending' OR approval_status IS NULL) THEN 1 ELSE 0 END) AS pending_jobs,
            SUM(CASE WHEN approval_status = 'rejected' THEN 1 ELSE 0 END) AS rejected_jobs,
-           SUM(CASE WHEN is_closed = 1 THEN 1 ELSE 0 END) AS closed_jobs
+           SUM(CASE WHEN is_closed = 1 OR (expires_at IS NOT NULL AND expires_at <= NOW()) THEN 1 ELSE 0 END) AS closed_jobs
          FROM job_post 
          WHERE user_id = ?`,
         [recruiterId]
