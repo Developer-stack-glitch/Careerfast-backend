@@ -21,6 +21,7 @@ const RecruiterSubscriptionController = require("../controllers/RecruiterSubscri
 const SubRecruiterController = require("../controllers/SubRecruiterController");
 const LocationController = require("../controllers/LocationController");
 const NvitesController = require("../controllers/NvitesController");
+const BulkCandidateUploadController = require("../controllers/BulkCandidateUploadController");
 const authRoutes = require("./auth");
 const tokenRoutes = require("./tokenRoutes");
 const eventRoutes = require("./eventRoutes");
@@ -97,6 +98,26 @@ router.get("/admin/roles/:id", verifyToken, verifySuperAdmin, AdminRoleControlle
 router.post("/admin/roles", verifyToken, verifySuperAdmin, AdminRoleController.createRole);
 router.put("/admin/roles/:id", verifyToken, verifySuperAdmin, AdminRoleController.updateRole);
 router.delete("/admin/roles/:id", verifyToken, verifySuperAdmin, AdminRoleController.deleteRole);
+
+// ==========================================
+// 🚀 Super Admin Bulk Candidate Upload Routes
+// ==========================================
+router.post(
+  "/admin/bulk-upload-candidates/preview",
+  verifyToken,
+  upload.single("file"),
+  BulkCandidateUploadController.previewCandidates
+);
+router.post(
+  "/admin/bulk-upload-candidates",
+  verifyToken,
+  upload.single("file"),
+  BulkCandidateUploadController.uploadCandidates
+);
+router.get(
+  "/admin/bulk-upload-candidates/sample-template",
+  BulkCandidateUploadController.downloadSampleTemplate
+);
 
 // ==========================================
 // 👥 Recruiter Team & Sub-Recruiter Routes

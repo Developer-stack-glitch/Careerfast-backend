@@ -38,10 +38,105 @@ const UserModel = {
         baseParams.push(rolesArray);
       }
       
-      if (search) {
-        baseWhere += ` AND (u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ?)`;
-        const searchPattern = `%${search}%`;
-        baseParams.push(searchPattern, searchPattern, searchPattern);
+      if (search && String(search).trim()) {
+        const trimmed = String(search).trim();
+        const searchPattern = `%${trimmed}%`;
+        const digitsOnly = trimmed.replace(/\D/g, '');
+        const tokens = trimmed.split(/\s+/).filter(Boolean);
+
+        let fullPhraseClauses = [
+          "CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) LIKE ?",
+          "CONCAT(COALESCE(u.last_name, ''), ' ', COALESCE(u.first_name, '')) LIKE ?",
+          "CONCAT(COALESCE(u.phone_code, ''), ' ', COALESCE(u.phone, '')) LIKE ?",
+          "CONCAT(COALESCE(u.phone_code, ''), COALESCE(u.phone, '')) LIKE ?",
+          "u.first_name LIKE ?",
+          "u.last_name LIKE ?",
+          "u.email LIKE ?",
+          "u.phone LIKE ?",
+          "u.location LIKE ?",
+          "u.skills LIKE ?",
+          "u.headline LIKE ?",
+          "u.about LIKE ?",
+          "u.course LIKE ?",
+          "u.class LIKE ?",
+          "u.organization LIKE ?",
+          `EXISTS (
+            SELECT 1 FROM user_education ue 
+            WHERE ue.user_id = u.id AND ue.is_deleted = 0 AND (
+              ue.qualification LIKE ? OR ue.course LIKE ? OR ue.specialization LIKE ? OR ue.college LIKE ?
+            )
+          )`
+        ];
+        let fullPhraseParams = [
+          searchPattern, searchPattern,
+          searchPattern, searchPattern,
+          searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
+          searchPattern, searchPattern, searchPattern, searchPattern
+        ];
+
+        if (digitsOnly.length >= 6) {
+          fullPhraseClauses.push("REPLACE(REPLACE(REPLACE(COALESCE(u.phone, ''), ' ', ''), '-', ''), '+', '') LIKE ?");
+          fullPhraseParams.push(`%${digitsOnly}%`);
+
+          if (digitsOnly.length > 10) {
+            const last10 = digitsOnly.slice(-10);
+            fullPhraseClauses.push("REPLACE(REPLACE(REPLACE(COALESCE(u.phone, ''), ' ', ''), '-', ''), '+', '') LIKE ?");
+            fullPhraseParams.push(`%${last10}%`);
+          }
+        }
+
+        let tokenClauses = [];
+        let tokenParams = [];
+
+        if (tokens.length > 1) {
+          for (const tok of tokens) {
+            const tokPattern = `%${tok}%`;
+            const tokDigits = tok.replace(/\D/g, '');
+            let tokFieldClauses = [
+              "u.first_name LIKE ?",
+              "u.last_name LIKE ?",
+              "u.email LIKE ?",
+              "u.phone LIKE ?",
+              "u.phone_code LIKE ?",
+              "u.location LIKE ?",
+              "u.skills LIKE ?",
+              "u.headline LIKE ?",
+              "u.about LIKE ?",
+              "u.course LIKE ?",
+              "u.class LIKE ?",
+              "u.organization LIKE ?",
+              `EXISTS (
+                SELECT 1 FROM user_education ue 
+                WHERE ue.user_id = u.id AND ue.is_deleted = 0 AND (
+                  ue.qualification LIKE ? OR ue.course LIKE ? OR ue.specialization LIKE ? OR ue.college LIKE ?
+                )
+              )`
+            ];
+            let tokFieldParams = [
+              tokPattern, tokPattern, tokPattern, tokPattern, tokPattern, tokPattern, tokPattern, tokPattern, tokPattern, tokPattern, tokPattern, tokPattern,
+              tokPattern, tokPattern, tokPattern, tokPattern
+            ];
+
+            if (tokDigits.length >= 6) {
+              tokFieldClauses.push("REPLACE(REPLACE(REPLACE(COALESCE(u.phone, ''), ' ', ''), '-', ''), '+', '') LIKE ?");
+              tokFieldParams.push(`%${tokDigits}%`);
+            }
+
+            tokenClauses.push(`(${tokFieldClauses.join(' OR ')})`);
+            tokenParams.push(...tokFieldParams);
+          }
+        }
+
+        let combinedSql = `(${fullPhraseClauses.join(' OR ')})`;
+        let combinedParams = [...fullPhraseParams];
+
+        if (tokenClauses.length > 0) {
+          combinedSql = `(${combinedSql} OR (${tokenClauses.join(' AND ')}))`;
+          combinedParams = [...combinedParams, ...tokenParams];
+        }
+
+        baseWhere += ` AND ${combinedSql}`;
+        baseParams.push(...combinedParams);
       }
 
       // 1. Resolve date filtering conditions

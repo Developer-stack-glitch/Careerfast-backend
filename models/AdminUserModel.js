@@ -25,8 +25,8 @@ const AdminUserModel = {
 
       if (search && search.trim()) {
         const term = `%${search.trim()}%`;
-        whereClauses.push('(u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ? OR u.phone LIKE ? OR ap.role_title LIKE ?)');
-        queryParams.push(term, term, term, term, term);
+        whereClauses.push('(CONCAT(COALESCE(u.first_name, ""), " ", COALESCE(u.last_name, "")) LIKE ? OR CONCAT(COALESCE(u.last_name, ""), " ", COALESCE(u.first_name, "")) LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ? OR u.phone LIKE ? OR ap.role_title LIKE ?)');
+        queryParams.push(term, term, term, term, term, term, term);
       }
 
       if (department && department !== 'all') {
@@ -52,7 +52,7 @@ const AdminUserModel = {
       const total = countResult[0]?.total || 0;
 
       // Fetch items
-       const [users] = await pool.query(
+      const [users] = await pool.query(
         `SELECT 
            u.id, 
            u.first_name, 
@@ -94,17 +94,17 @@ const AdminUserModel = {
         if (!perms) {
           perms = user.is_super_admin
             ? {
-                dashboard: { view: true, create_edit: true, delete: true },
-                analytics: { view: true, create_edit: true, delete: true },
-                plans: { view: true, create_edit: true, delete: true },
-                recruiters: { view: true, create_edit: true, delete: true },
-                job_posts: { view: true, create_edit: true, delete: true },
-                job_seekers: { view: true, create_edit: true, delete: true },
-                applications: { view: true, create_edit: true, delete: true },
-                support: { view: true, create_edit: true, delete: true },
-                user_management: { view: true, create_edit: true, delete: true },
-                settings: { view: true, create_edit: true, delete: true },
-              }
+              dashboard: { view: true, create_edit: true, delete: true },
+              analytics: { view: true, create_edit: true, delete: true },
+              plans: { view: true, create_edit: true, delete: true },
+              recruiters: { view: true, create_edit: true, delete: true },
+              job_posts: { view: true, create_edit: true, delete: true },
+              job_seekers: { view: true, create_edit: true, delete: true },
+              applications: { view: true, create_edit: true, delete: true },
+              support: { view: true, create_edit: true, delete: true },
+              user_management: { view: true, create_edit: true, delete: true },
+              settings: { view: true, create_edit: true, delete: true },
+            }
             : defaultModulePermissions;
         }
         return {
@@ -345,7 +345,7 @@ const AdminUserModel = {
            VALUES (?, 'UPDATE_ADMIN_USER', 'users', ?, ?, NOW())`,
           [modifierId || 1, id, JSON.stringify({ role_title, department, is_super_admin })]
         );
-      } catch (e) {}
+      } catch (e) { }
 
       await connection.commit();
       return true;
@@ -372,7 +372,7 @@ const AdminUserModel = {
            VALUES (?, 'TOGGLE_ADMIN_STATUS', 'users', ?, ?, NOW())`,
           [modifierId || 1, id, JSON.stringify({ is_active: newStatus })]
         );
-      } catch (e) {}
+      } catch (e) { }
 
       return true;
     } catch (error) {
@@ -395,7 +395,7 @@ const AdminUserModel = {
            VALUES (?, 'RESET_ADMIN_PASSWORD', 'users', ?, ?, NOW())`,
           [modifierId || 1, id, JSON.stringify({ note: 'Password updated by admin' })]
         );
-      } catch (e) {}
+      } catch (e) { }
 
       return true;
     } catch (error) {
@@ -421,7 +421,7 @@ const AdminUserModel = {
            VALUES (?, 'DELETE_ADMIN_USER', 'users', ?, ?, NOW())`,
           [modifierId || 1, id, JSON.stringify({ deleted_admin_id: id })]
         );
-      } catch (e) {}
+      } catch (e) { }
 
       return true;
     } catch (error) {
