@@ -93,5 +93,12 @@ const CourseModel = {
     },
 };
 
+// Pre-warm courses cache on startup
+setTimeout(() => {
+    CourseModel.getAll(3).catch(() => {});
+    CourseModel.getAll(4).catch(() => {});
+    CourseModel.getAll().catch(() => {});
+}, 1000);
+
 module.exports = CourseModel;
 

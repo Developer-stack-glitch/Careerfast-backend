@@ -1504,20 +1504,13 @@ const JobsModel = {
       }
 
       // Job category filter (array of categories)
-      // In your model where you build the query:
       if (filters.job_categories && filters.job_categories.length > 0) {
         const validCategories = filters.job_categories.filter(cat => cat && String(cat).trim() !== "");
 
         if (validCategories.length > 0) {
-          whereClauses.push(`(
-            ${validCategories
-              .map(() => `JSON_SEARCH(LOWER(IF(JSON_VALID(job_category), job_category, '[]')), 'one', ?) IS NOT NULL`)
-              .join(" OR ")}
-          )`);
-
-          validCategories.forEach((category) => {
-            queryParams.push(category.toLowerCase());
-          });
+          const catPlaceholders = validCategories.map(() => "?").join(",");
+          whereClauses.push(`(job_post.primary_category IN (${catPlaceholders}) OR job_post.secondary_category IN (${catPlaceholders}))`);
+          queryParams.push(...validCategories, ...validCategories);
         }
       }
 
@@ -1581,7 +1574,7 @@ const JobsModel = {
       } else if (sortBy === 'relevance') {
         orderClause = ` ORDER BY (SELECT COUNT(*) FROM applied_jobs WHERE applied_jobs.postId = job_post.id) DESC, COALESCE(job_post.views_count, 0) DESC, job_post.created_at DESC, job_post.id DESC`;
       } else if (sortBy === 'recommended') {
-        orderClause = ` ORDER BY CASE WHEN job_post.company_logo IS NOT NULL AND job_post.company_logo != '' AND job_post.company_logo NOT LIKE '%dummy_img%' THEN 0 ELSE 1 END, CASE WHEN (COALESCE(job_post.min_salary, 0) > 0 OR COALESCE(job_post.max_salary, 0) > 0) THEN 0 ELSE 1 END, job_post.created_at DESC, job_post.id DESC`;
+        orderClause = ` ORDER BY job_post.has_logo_priority ASC, job_post.created_at DESC, job_post.id DESC`;
       } else if (filters.sort_key && ALLOWED_SORT_KEYS[filters.sort_key]) {
         const dir = filters.sort_direction === 'desc' ? 'DESC' : 'ASC';
         orderClause = ` ORDER BY ${ALLOWED_SORT_KEYS[filters.sort_key]} ${dir}, job_post.id DESC`;
@@ -1592,7 +1585,7 @@ const JobsModel = {
           orderClause = ` ORDER BY COALESCE(job_post.max_salary, 0) DESC, job_post.id DESC`;
         }
       } else {
-        orderClause = ` ORDER BY CASE WHEN job_post.company_logo IS NOT NULL AND job_post.company_logo != '' AND job_post.company_logo NOT LIKE '%dummy_img%' THEN 0 ELSE 1 END, CASE WHEN (COALESCE(job_post.min_salary, 0) > 0 OR COALESCE(job_post.max_salary, 0) > 0) THEN 0 ELSE 1 END, job_post.created_at DESC, job_post.id DESC`;
+        orderClause = ` ORDER BY job_post.has_logo_priority ASC, job_post.created_at DESC, job_post.id DESC`;
       }
 
       // Apply pagination with LIMIT and OFFSET

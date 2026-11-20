@@ -106,6 +106,12 @@ async function ensureDatabaseIndexes() {
     await ensureIndex("job_post", "idx_job_post_expires_at", "expires_at");
     await ensureIndex("job_post", "idx_job_post_company_name", "company_name(100)");
     await ensureIndex("job_post", "idx_job_post_filter_nature", "job_nature, experience_type, is_closed, approval_status");
+    await ensureColumn("job_post", "has_logo_priority", "TINYINT(1) GENERATED ALWAYS AS (CASE WHEN company_logo IS NOT NULL AND company_logo != '' AND company_logo NOT LIKE '%dummy%' THEN 0 ELSE 1 END) STORED");
+    await ensureIndex("job_post", "idx_logo_created", "approval_status, is_closed, has_logo_priority, created_at DESC");
+    await ensureColumn("job_post", "primary_category", "VARCHAR(150) GENERATED ALWAYS AS (COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(job_category), job_category, '[]'), '$[0]')), '')) STORED");
+    await ensureIndex("job_post", "idx_primary_category", "primary_category, approval_status, is_closed");
+    await ensureColumn("job_post", "secondary_category", "VARCHAR(150) GENERATED ALWAYS AS (COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(job_category), job_category, '[]'), '$[1]')), '')) STORED");
+    await ensureIndex("job_post", "idx_secondary_category", "secondary_category, approval_status, is_closed");
 
     // subscription_plans columns
     await ensureColumn("subscription_plans", "email_limit", "INT NOT NULL DEFAULT 50");
