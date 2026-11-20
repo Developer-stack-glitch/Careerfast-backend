@@ -11,17 +11,21 @@ dayjs.extend(timezone);
 // In-memory caches for high-traffic homepage and catalog endpoints
 let homePageStatsCache = null;
 let homePageStatsCacheTime = 0;
-const STATS_CACHE_TTL = 60 * 1000; // 60s
+const STATS_CACHE_TTL = 10 * 60 * 1000; // 10m
 
 let trendingSearchesCache = null;
 let trendingSearchesCacheTime = 0;
-const TRENDING_CACHE_TTL = 5 * 60 * 1000; // 5m
+const TRENDING_CACHE_TTL = 10 * 60 * 1000; // 10m
+
+let topCompaniesCache = null;
+let topCompaniesCacheTime = 0;
+const TOP_COMPANIES_CACHE_TTL = 10 * 60 * 1000; // 10m
 
 const categoriesCache = new Map();
-const CATEGORIES_CACHE_TTL = 5 * 60 * 1000; // 5m
+const CATEGORIES_CACHE_TTL = 10 * 60 * 1000; // 10m
 
 const jobPostsCache = new Map();
-const JOB_POSTS_CACHE_TTL = 60 * 1000; // 60s
+const JOB_POSTS_CACHE_TTL = 5 * 60 * 1000; // 5m
 
 const adminStatsCache = new Map();
 const ADMIN_STATS_CACHE_TTL = 30 * 1000; // 30s cache for admin stats to make tab switches and pagination instant
@@ -2876,23 +2880,32 @@ const JobsModel = {
         return homePageStatsCache;
       }
 
-      const [[jobsCount], [recruitersCount], [applicationsCount]] = await Promise.all([
-        pool.query("SELECT COUNT(*) as total FROM job_post"),
-        pool.query("SELECT COUNT(DISTINCT company_name) as total FROM job_post"),
-        pool.query("SELECT COUNT(*) as total FROM applied_jobs")
-      ]);
+      if (homePageStatsCache) {
+        JobsModel.refreshHomePageStats().catch(err => console.warn("Background refresh stats failed:", err.message));
+        return homePageStatsCache;
+      }
 
-      homePageStatsCache = {
-        totalJobs: jobsCount[0]?.total || 0,
-        totalRecruiters: recruitersCount[0]?.total || 0,
-        totalApplications: applicationsCount[0]?.total || 0
-      };
-      homePageStatsCacheTime = now;
-
-      return homePageStatsCache;
+      return await JobsModel.refreshHomePageStats();
     } catch (error) {
+      if (homePageStatsCache) return homePageStatsCache;
       throw new Error(error.message);
     }
+  },
+
+  refreshHomePageStats: async () => {
+    const [[jobsCount], [recruitersCount], [applicationsCount]] = await Promise.all([
+      pool.query("SELECT COUNT(*) as total FROM job_post WHERE (is_closed = 0 OR is_closed IS NULL) AND (approval_status = 'approved' OR approval_status IS NULL)"),
+      pool.query("SELECT COUNT(DISTINCT company_name) as total FROM job_post WHERE company_name IS NOT NULL AND company_name != ''"),
+      pool.query("SELECT COUNT(*) as total FROM applied_jobs")
+    ]);
+
+    homePageStatsCache = {
+      totalJobs: jobsCount[0]?.total || 0,
+      totalRecruiters: recruitersCount[0]?.total || 0,
+      totalApplications: applicationsCount[0]?.total || 0
+    };
+    homePageStatsCacheTime = Date.now();
+    return homePageStatsCache;
   },
 
   getTrendingSearches: async () => {
@@ -2902,93 +2915,103 @@ const JobsModel = {
         return trendingSearchesCache;
       }
 
-      // Get all work locations for 'Job'
-      const [jobPosts] = await pool.query(
-        "SELECT work_location FROM job_post WHERE job_nature = 'Job' AND work_location IS NOT NULL"
-      );
+      if (trendingSearchesCache) {
+        JobsModel.refreshTrendingSearches().catch(err => console.warn("Background refresh trending failed:", err.message));
+        return trendingSearchesCache;
+      }
 
-      const locationCounts = {};
-      jobPosts.forEach(post => {
-        try {
-          const locations = typeof post.work_location === 'string' ? JSON.parse(post.work_location) : post.work_location;
-          if (Array.isArray(locations)) {
-            locations.forEach(loc => {
-              if (loc && typeof loc === 'string') {
-                const cleanLoc = loc.trim();
-                if (cleanLoc) {
-                  locationCounts[cleanLoc] = (locationCounts[cleanLoc] || 0) + 1;
-                }
-              }
-            });
-          }
-        } catch (e) {
-          // Ignore invalid JSON
-        }
-      });
-
-      const trendingLocations = Object.entries(locationCounts)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([location, count]) => ({ location: location.trim(), count }));
-
-      // Get all categories for 'Internship'
-      const [internshipPosts] = await pool.query(
-        "SELECT job_category FROM job_post WHERE job_nature = 'Internship' AND job_category IS NOT NULL"
-      );
-
-      const categoryCounts = {};
-      internshipPosts.forEach(post => {
-        try {
-          const categories = typeof post.job_category === 'string' ? JSON.parse(post.job_category) : post.job_category;
-          if (Array.isArray(categories)) {
-            categories.forEach(cat => {
-              if (cat && typeof cat === 'string') {
-                const cleanCat = cat.trim();
-                if (cleanCat) {
-                  categoryCounts[cleanCat] = (categoryCounts[cleanCat] || 0) + 1;
-                }
-              }
-            });
-          }
-        } catch (e) {
-          // Ignore invalid JSON
-        }
-      });
-
-      const trendingCategories = Object.entries(categoryCounts)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([category, count]) => ({ category: category.trim(), count }));
-
-      const trending = [];
-
-      trendingLocations.forEach(item => {
-        trending.push({
-          label: `jobs, ${item.location}`,
-          location: item.location,
-          job_nature: 'Job',
-          count: item.count,
-          isNew: true
-        });
-      });
-
-      trendingCategories.forEach(item => {
-        trending.push({
-          label: `internship, ${item.category}`,
-          category: item.category,
-          job_nature: 'Internship',
-          count: item.count,
-          isNew: true
-        });
-      });
-
-      trendingSearchesCache = trending;
-      trendingSearchesCacheTime = now;
-
-      return trending;
+      return await JobsModel.refreshTrendingSearches();
     } catch (error) {
+      if (trendingSearchesCache) return trendingSearchesCache;
       throw new Error(error.message);
     }
+  },
+
+  refreshTrendingSearches: async () => {
+    // Get all work locations for 'Job'
+    const [jobPosts] = await pool.query(
+      "SELECT work_location FROM job_post WHERE job_nature = 'Job' AND work_location IS NOT NULL"
+    );
+
+    const locationCounts = {};
+    jobPosts.forEach(post => {
+      try {
+        const locations = typeof post.work_location === 'string' ? JSON.parse(post.work_location) : post.work_location;
+        if (Array.isArray(locations)) {
+          locations.forEach(loc => {
+            if (loc && typeof loc === 'string') {
+              const cleanLoc = loc.trim();
+              if (cleanLoc) {
+                locationCounts[cleanLoc] = (locationCounts[cleanLoc] || 0) + 1;
+              }
+            }
+          });
+        }
+      } catch (e) {
+        // Ignore invalid JSON
+      }
+    });
+
+    const trendingLocations = Object.entries(locationCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([location, count]) => ({ location: location.trim(), count }));
+
+    // Get all categories for 'Internship'
+    const [internshipPosts] = await pool.query(
+      "SELECT job_category FROM job_post WHERE job_nature = 'Internship' AND job_category IS NOT NULL"
+    );
+
+    const categoryCounts = {};
+    internshipPosts.forEach(post => {
+      try {
+        const categories = typeof post.job_category === 'string' ? JSON.parse(post.job_category) : post.job_category;
+        if (Array.isArray(categories)) {
+          categories.forEach(cat => {
+            if (cat && typeof cat === 'string') {
+              const cleanCat = cat.trim();
+              if (cleanCat) {
+                categoryCounts[cleanCat] = (categoryCounts[cleanCat] || 0) + 1;
+              }
+            }
+          });
+        }
+      } catch (e) {
+        // Ignore invalid JSON
+      }
+    });
+
+    const trendingCategories = Object.entries(categoryCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([category, count]) => ({ category: category.trim(), count }));
+
+    const trending = [];
+
+    trendingLocations.forEach(item => {
+      trending.push({
+        label: `jobs, ${item.location}`,
+        location: item.location,
+        job_nature: 'Job',
+        count: item.count,
+        isNew: true
+      });
+    });
+
+    trendingCategories.forEach(item => {
+      trending.push({
+        label: `internship, ${item.category}`,
+        category: item.category,
+        job_nature: 'Internship',
+        count: item.count,
+        isNew: true
+      });
+    });
+
+    trendingSearchesCache = trending;
+    trendingSearchesCacheTime = Date.now();
+
+    return trending;
   },
 
   getUniqueCompanies: async () => {
@@ -3005,47 +3028,66 @@ const JobsModel = {
   getTopCompanies: async (limit = 12) => {
     try {
       const numLimit = Math.max(1, Math.min(50, Number(limit) || 12));
-      const [companies] = await pool.query(`
-        SELECT 
-          TRIM(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) AS name,
-          MAX(CASE 
-            WHEN job_post.company_logo IS NOT NULL AND job_post.company_logo != '' AND job_post.company_logo NOT LIKE '%dummy%' 
-            THEN job_post.company_logo 
-            WHEN hr_profiles.profile_image IS NOT NULL AND hr_profiles.profile_image != '' AND hr_profiles.profile_image NOT LIKE '%dummy%'
-            THEN hr_profiles.profile_image 
-            ELSE NULL 
-          END) AS logo,
-          COALESCE(MAX(NULLIF(job_post.industry, '')), MAX(NULLIF(job_post.candidate_industry, '')), 'Information Technology') AS type,
-          COUNT(*) AS active_jobs
-        FROM job_post
-        LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id
-        WHERE (job_post.is_closed = 0 OR job_post.is_closed IS NULL)
-          AND (job_post.approval_status = 'Approved' OR job_post.approval_status IS NULL)
-          AND COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name) IS NOT NULL
-          AND TRIM(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) != ''
-        GROUP BY TRIM(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name))
-        ORDER BY active_jobs DESC
-        LIMIT ?
-      `, [numLimit]);
+      const now = Date.now();
+      if (topCompaniesCache && (now - topCompaniesCacheTime < TOP_COMPANIES_CACHE_TTL)) {
+        return topCompaniesCache;
+      }
 
-      return companies.map((c) => {
-        const hash = (c.name || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        const rating = (4.2 + (hash % 8) / 10).toFixed(1);
-        const reviewsCount = ((hash % 25) + 5) * 1.2;
-        const reviews = `${reviewsCount.toFixed(1)}k reviews`;
+      if (topCompaniesCache) {
+        JobsModel.refreshTopCompanies(numLimit).catch(err => console.warn("Background refresh top companies failed:", err.message));
+        return topCompaniesCache;
+      }
 
-        return {
-          name: c.name,
-          logo: c.logo || null,
-          type: c.type || 'Information Technology',
-          active_jobs: Number(c.active_jobs) || 1,
-          rating: rating,
-          reviews: reviews
-        };
-      });
+      return await JobsModel.refreshTopCompanies(numLimit);
     } catch (error) {
+      if (topCompaniesCache) return topCompaniesCache;
       throw new Error(error.message);
     }
+  },
+
+  refreshTopCompanies: async (numLimit = 12) => {
+    const [companies] = await pool.query(`
+      SELECT 
+        TRIM(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) AS name,
+        MAX(CASE 
+          WHEN job_post.company_logo IS NOT NULL AND job_post.company_logo != '' AND job_post.company_logo NOT LIKE '%dummy%' 
+          THEN job_post.company_logo 
+          WHEN hr_profiles.profile_image IS NOT NULL AND hr_profiles.profile_image != '' AND hr_profiles.profile_image NOT LIKE '%dummy%'
+          THEN hr_profiles.profile_image 
+          ELSE NULL 
+        END) AS logo,
+        COALESCE(MAX(NULLIF(job_post.industry, '')), MAX(NULLIF(job_post.candidate_industry, '')), 'Information Technology') AS type,
+        COUNT(*) AS active_jobs
+      FROM job_post
+      LEFT JOIN hr_profiles ON job_post.user_id = hr_profiles.user_id
+      WHERE (job_post.is_closed = 0 OR job_post.is_closed IS NULL)
+        AND (job_post.approval_status = 'Approved' OR job_post.approval_status IS NULL)
+        AND COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name) IS NOT NULL
+        AND TRIM(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name)) != ''
+      GROUP BY TRIM(COALESCE(NULLIF(job_post.company_name, ''), hr_profiles.company_name))
+      ORDER BY active_jobs DESC
+      LIMIT ?
+    `, [numLimit]);
+
+    const result = companies.map((c) => {
+      const hash = (c.name || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      const rating = (4.2 + (hash % 8) / 10).toFixed(1);
+      const reviewsCount = ((hash % 25) + 5) * 1.2;
+      const reviews = `${reviewsCount.toFixed(1)}k reviews`;
+
+      return {
+        name: c.name,
+        logo: c.logo || null,
+        type: c.type || 'Information Technology',
+        active_jobs: Number(c.active_jobs) || 1,
+        rating: rating,
+        reviews: reviews
+      };
+    });
+
+    topCompaniesCache = result;
+    topCompaniesCacheTime = Date.now();
+    return result;
   },
 
   getSearchSuggestions: async (query = "", type = "all") => {
@@ -4016,5 +4058,12 @@ const JobsModel = {
   },
 
 };
+
+// Pre-warm high-frequency homepage caches in the background
+setTimeout(() => {
+  JobsModel.getHomePageStats().catch(() => {});
+  JobsModel.getTrendingSearches().catch(() => {});
+  JobsModel.getTopCompanies(12).catch(() => {});
+}, 1000);
 
 module.exports = JobsModel;

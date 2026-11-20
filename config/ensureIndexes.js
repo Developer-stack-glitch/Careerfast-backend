@@ -104,6 +104,8 @@ async function ensureDatabaseIndexes() {
     await ensureColumn("job_post", "expire_in_months", "INT NULL DEFAULT 1");
     await ensureColumn("job_post", "expires_at", "DATETIME NULL");
     await ensureIndex("job_post", "idx_job_post_expires_at", "expires_at");
+    await ensureIndex("job_post", "idx_job_post_company_name", "company_name(100)");
+    await ensureIndex("job_post", "idx_job_post_filter_nature", "job_nature, experience_type, is_closed, approval_status");
 
     // subscription_plans columns
     await ensureColumn("subscription_plans", "email_limit", "INT NOT NULL DEFAULT 50");
