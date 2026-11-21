@@ -1688,7 +1688,7 @@ const UserModel = {
           COALESCE(h.profile_image, u.profile_image) AS profile_image,
           h.banner_image,
           COALESCE(h.company_name, u.organization) AS company_name,
-          h.about_us,
+          COALESCE(h.about_us, u.about) AS about_us,
           COALESCE(h.organization_type, ot.name) AS organization_type,
           COALESCE(h.industry_type, u.preferred_roles) AS industry_type,
           h.team_size,
@@ -1723,7 +1723,16 @@ const UserModel = {
         LEFT JOIN hr_profiles h ON h.user_id = u.id
         LEFT JOIN companies c ON u.company_id = c.id
         LEFT JOIN organization_type ot ON u.organization_type_id = ot.id
-        LEFT JOIN user_address ua ON u.id = ua.user_id AND (ua.is_deleted = 0 OR ua.is_deleted IS NULL)
+        LEFT JOIN (
+          SELECT ua1.*
+          FROM user_address ua1
+          JOIN (
+            SELECT user_id, MAX(id) AS max_id
+            FROM user_address
+            WHERE (is_deleted = 0 OR is_deleted IS NULL)
+            GROUP BY user_id
+          ) ua2 ON ua1.id = ua2.max_id
+        ) ua ON u.id = ua.user_id
         LEFT JOIN user_social_links s ON u.id = s.user_id
         WHERE u.id = ?
       `;
@@ -1787,54 +1796,351 @@ const UserModel = {
     }
   },
 
-  insertHrProfile: async (
-    user_id,
-    profile_image,
-    banner_image,
-    company_name,
-    about_us,
-    organization_type,
-    industry_type,
-    team_size,
-    year_established,
-    website_url,
-    vision,
-    social_links,
-    map_location,
-    contact_phone,
-    contact_email
-  ) => {
+  insertHrProfile: async (payloadOrUserId, ...rest) => {
+    let payload = {};
+    if (typeof payloadOrUserId === "object" && payloadOrUserId !== null) {
+      payload = payloadOrUserId;
+    } else {
+      const [
+        profile_image,
+        banner_image,
+        company_name,
+        about_us,
+        organization_type,
+        industry_type,
+        team_size,
+        year_established,
+        website_url,
+        vision,
+        social_links,
+        map_location,
+        contact_phone,
+        contact_email,
+      ] = rest;
+      payload = {
+        user_id: payloadOrUserId,
+        profile_image,
+        banner_image,
+        company_name,
+        about_us,
+        organization_type,
+        industry_type,
+        team_size,
+        year_established,
+        website_url,
+        vision,
+        social_links,
+        map_location,
+        contact_phone,
+        contact_email,
+      };
+    }
+
+    const {
+      user_id,
+      profile_image,
+      banner_image,
+      company_name,
+      about_us,
+      organization_type,
+      industry_type,
+      team_size,
+      year_established,
+      website_url,
+      vision,
+      social_links,
+      map_location,
+      contact_phone,
+      contact_email,
+      first_name,
+      last_name,
+      headline,
+      address1,
+      address2,
+      city,
+      state,
+      country,
+      pincode,
+      skills,
+      total_years,
+      preferred_roles,
+      career_level,
+    } = payload;
+
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
 
-      // Insert or update HR Profile
+      // 1. Insert or update hr_profiles table
       const [existingHr] = await conn.query(`SELECT id FROM hr_profiles WHERE user_id = ?`, [user_id]);
       if (existingHr.length > 0) {
         await conn.query(
-          `UPDATE hr_profiles SET profile_image = ?, banner_image = ?, company_name = ?, about_us = ?, organization_type = ?, industry_type = ?, team_size = ?, year_established = ?, website_url = ?, vision = ?, map_location = ?, contact_phone = ?, contact_email = ? WHERE user_id = ?`,
-          [profile_image, banner_image, company_name, about_us, organization_type, industry_type, team_size, year_established, website_url, vision, map_location, contact_phone, contact_email, user_id].map(v => v === undefined ? null : v)
+          `UPDATE hr_profiles SET
+            profile_image = COALESCE(?, profile_image),
+            banner_image = COALESCE(?, banner_image),
+            company_name = COALESCE(?, company_name),
+            about_us = COALESCE(?, about_us),
+            organization_type = COALESCE(?, organization_type),
+            industry_type = COALESCE(?, industry_type),
+            team_size = COALESCE(?, team_size),
+            year_established = COALESCE(?, year_established),
+            website_url = COALESCE(?, website_url),
+            vision = COALESCE(?, vision),
+            map_location = COALESCE(?, map_location),
+            contact_phone = COALESCE(?, contact_phone),
+            contact_email = COALESCE(?, contact_email)
+          WHERE user_id = ?`,
+          [
+            profile_image ?? null,
+            banner_image ?? null,
+            company_name ?? null,
+            about_us ?? null,
+            organization_type ?? null,
+            industry_type ?? null,
+            team_size ?? null,
+            year_established ?? null,
+            website_url ?? null,
+            vision ?? null,
+            map_location ?? null,
+            contact_phone ?? null,
+            contact_email ?? null,
+            user_id,
+          ]
         );
       } else {
         await conn.query(
-          `INSERT INTO hr_profiles (user_id, profile_image, banner_image, company_name, about_us, organization_type, industry_type, team_size, year_established, website_url, vision, map_location, contact_phone, contact_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [user_id, profile_image, banner_image, company_name, about_us, organization_type, industry_type, team_size, year_established, website_url, vision, map_location, contact_phone, contact_email].map(v => v === undefined ? null : v)
+          `INSERT INTO hr_profiles (
+            user_id, profile_image, banner_image, company_name, about_us,
+            organization_type, industry_type, team_size, year_established,
+            website_url, vision, map_location, contact_phone, contact_email
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            user_id,
+            profile_image ?? null,
+            banner_image ?? null,
+            company_name ?? null,
+            about_us ?? null,
+            organization_type ?? null,
+            industry_type ?? null,
+            team_size ?? null,
+            year_established ?? null,
+            website_url ?? null,
+            vision ?? null,
+            map_location ?? null,
+            contact_phone ?? null,
+            contact_email ?? null,
+          ]
         );
       }
 
-      // Update social links
+      // 2. Update users table with basic info, recruiter details, and JSON additional_info
+      const [uRows] = await conn.query(`SELECT additional_info, company_id FROM users WHERE id = ?`, [user_id]);
+      let currentExtra = {};
+      let companyId = null;
+      if (uRows.length > 0) {
+        companyId = uRows[0].company_id;
+        if (uRows[0].additional_info) {
+          try {
+            currentExtra = typeof uRows[0].additional_info === "string"
+              ? JSON.parse(uRows[0].additional_info)
+              : (uRows[0].additional_info || {});
+          } catch (e) {
+            currentExtra = {};
+          }
+        }
+      }
+
+      const updatedExtra = {
+        ...currentExtra,
+        ...(first_name !== undefined && { first_name }),
+        ...(last_name !== undefined && { last_name }),
+        ...(headline !== undefined && { designation: headline }),
+        ...(company_name !== undefined && { company_name }),
+        ...(organization_type !== undefined && { organization_type }),
+        ...(industry_type !== undefined && { industry_type }),
+        ...(year_established !== undefined && { year_established }),
+        ...(website_url !== undefined && { website_url }),
+        ...(about_us !== undefined && { about_us }),
+        ...(address1 !== undefined && { address1 }),
+        ...(address2 !== undefined && { address2 }),
+        ...(city !== undefined && { city }),
+        ...(state !== undefined && { state }),
+        ...(country !== undefined && { country }),
+        ...(pincode !== undefined && { pincode }),
+        ...(total_years !== undefined && { hiring_experience: total_years }),
+        ...(career_level !== undefined && { hiring_levels: career_level }),
+        ...(preferred_roles !== undefined && { functions: preferred_roles }),
+        ...(skills !== undefined && { skills }),
+        ...(contact_phone !== undefined && { phone: contact_phone }),
+        ...(contact_email !== undefined && { email: contact_email }),
+      };
+
+      const skillsFormatted = skills !== undefined
+        ? (Array.isArray(skills) ? JSON.stringify(skills) : skills)
+        : null;
+      const careerLevelFormatted = career_level !== undefined
+        ? (Array.isArray(career_level) ? JSON.stringify(career_level) : career_level)
+        : null;
+      const preferredRolesFormatted = preferred_roles !== undefined
+        ? (Array.isArray(preferred_roles) ? JSON.stringify(preferred_roles) : preferred_roles)
+        : null;
+
+      const computedLocation = (city && state) ? `${city}, ${state}` : (map_location || null);
+
+      await conn.query(
+        `UPDATE users SET
+          first_name = COALESCE(?, first_name),
+          last_name = COALESCE(?, last_name),
+          headline = COALESCE(?, headline),
+          organization = COALESCE(?, organization),
+          profile_image = COALESCE(?, profile_image),
+          phone = COALESCE(?, phone),
+          location = COALESCE(?, location),
+          skills = COALESCE(?, skills),
+          total_years = COALESCE(?, total_years),
+          career_level = COALESCE(?, career_level),
+          preferred_roles = COALESCE(?, preferred_roles),
+          about = COALESCE(?, about),
+          additional_info = ?,
+          updated_date = CURRENT_TIMESTAMP
+        WHERE id = ?`,
+        [
+          first_name ?? null,
+          last_name ?? null,
+          headline ?? null,
+          company_name ?? null,
+          profile_image ?? null,
+          contact_phone ?? null,
+          computedLocation,
+          skillsFormatted,
+          total_years ?? null,
+          careerLevelFormatted,
+          preferredRolesFormatted,
+          about_us ?? null,
+          JSON.stringify(updatedExtra),
+          user_id,
+        ]
+      );
+
+      // 3. Update or Insert user_address
+      if (address1 !== undefined || address2 !== undefined || city !== undefined || state !== undefined || pincode !== undefined || country !== undefined) {
+        const [existingAddr] = await conn.query(
+          `SELECT id FROM user_address WHERE user_id = ? AND (is_deleted = 0 OR is_deleted IS NULL) ORDER BY id DESC LIMIT 1`,
+          [user_id]
+        );
+        if (existingAddr.length > 0) {
+          await conn.query(
+            `UPDATE user_address SET
+              address1 = COALESCE(?, address1),
+              address2 = COALESCE(?, address2),
+              city = COALESCE(?, city),
+              state = COALESCE(?, state),
+              country = COALESCE(?, country),
+              pincode = COALESCE(?, pincode)
+            WHERE id = ?`,
+            [
+              address1 ?? null,
+              address2 ?? null,
+              city ?? null,
+              state ?? null,
+              country ?? null,
+              pincode ?? null,
+              existingAddr[0].id,
+            ]
+          );
+        } else {
+          await conn.query(
+            `INSERT INTO user_address (user_id, address1, address2, city, state, country, pincode, created_date, is_deleted)
+             VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), 0)`,
+            [
+              user_id,
+              address1 ?? null,
+              address2 ?? null,
+              city ?? null,
+              state ?? null,
+              country ?? "India",
+              pincode ?? null,
+            ]
+          );
+        }
+      }
+
+      // 4. Update current experience in user_professional
+      if (headline || company_name) {
+        const [currExp] = await conn.query(
+          `SELECT id FROM user_professional WHERE user_id = ? AND currently_working = 1 AND (is_deleted = 0 OR is_deleted IS NULL) LIMIT 1`,
+          [user_id]
+        );
+        if (currExp.length > 0) {
+          await conn.query(
+            `UPDATE user_professional SET
+              job_title = COALESCE(?, job_title),
+              designation = COALESCE(?, designation),
+              company_name = COALESCE(?, company_name),
+              location = COALESCE(?, location)
+            WHERE id = ?`,
+            [headline ?? null, headline ?? null, company_name ?? null, computedLocation, currExp[0].id]
+          );
+        } else {
+          await conn.query(
+            `INSERT INTO user_professional (user_id, job_title, designation, company_name, location, currently_working, is_deleted)
+             VALUES (?, ?, ?, ?, ?, 1, 0)`,
+            [user_id, headline || "Recruiter", headline || "Recruiter", company_name || "", computedLocation || ""]
+          );
+        }
+      }
+
+      // 5. Update linked company if exists
+      if (companyId) {
+        await conn.query(
+          `UPDATE companies SET
+            name = COALESCE(?, name),
+            website = COALESCE(?, website),
+            company_type = COALESCE(?, company_type),
+            industry = COALESCE(?, industry),
+            description = COALESCE(?, description),
+            logo = COALESCE(?, logo),
+            address = COALESCE(?, address),
+            city = COALESCE(?, city),
+            state = COALESCE(?, state),
+            country = COALESCE(?, country),
+            pincode = COALESCE(?, pincode),
+            phone = COALESCE(?, phone),
+            email = COALESCE(?, email),
+            updated_at = NOW()
+          WHERE id = ?`,
+          [
+            company_name ?? null,
+            website_url ?? null,
+            organization_type ?? null,
+            industry_type ?? null,
+            about_us ?? null,
+            profile_image ?? null,
+            address1 ?? null,
+            city ?? null,
+            state ?? null,
+            country ?? null,
+            pincode ?? null,
+            contact_phone ?? null,
+            contact_email ?? null,
+            companyId,
+          ]
+        );
+      }
+
+      // 6. Update user_social_links
       if (social_links) {
-        const { facebook, twitter, instagram, youtube } = social_links;
+        const { facebook, twitter, instagram, youtube, linkedin } = social_links;
         const [existingSocials] = await conn.query(`SELECT id FROM user_social_links WHERE user_id = ?`, [user_id]);
         if (existingSocials.length > 0) {
           await conn.query(
             `UPDATE user_social_links SET facebook = ?, twitter = ?, instagram = ?, linkedin = ? WHERE user_id = ?`,
-            [facebook, twitter, instagram, youtube, user_id].map(v => v === undefined ? null : v) // using linkedin column for youtube for now if youtube doesn't exist, wait, youtube doesn't exist in schema. I'll need to check the schema of user_social_links.
+            [facebook, twitter, instagram, youtube || linkedin, user_id].map((v) => (v === undefined ? null : v))
           );
         } else {
           await conn.query(
             `INSERT INTO user_social_links (user_id, facebook, twitter, instagram, linkedin) VALUES (?, ?, ?, ?, ?)`,
-            [user_id, facebook, twitter, instagram, youtube].map(v => v === undefined ? null : v)
+            [user_id, facebook, twitter, instagram, youtube || linkedin].map((v) => (v === undefined ? null : v))
           );
         }
       }
@@ -1875,7 +2181,7 @@ const UserModel = {
   updateProfileImage: async (user_id, base64Image) => {
     try {
       const [isUserExists] = await pool.query(
-        `SELECT id FROM users WHERE id = ?`,
+        `SELECT id, company_id FROM users WHERE id = ?`,
         [user_id]
       );
       if (isUserExists.length <= 0) {
@@ -1885,6 +2191,16 @@ const UserModel = {
         `UPDATE users SET profile_image = ? WHERE id = ?`,
         [base64Image, user_id]
       );
+      await pool.query(
+        `UPDATE hr_profiles SET profile_image = ? WHERE user_id = ?`,
+        [base64Image, user_id]
+      );
+      if (isUserExists[0].company_id) {
+        await pool.query(
+          `UPDATE companies SET logo = ? WHERE id = ?`,
+          [base64Image, isUserExists[0].company_id]
+        );
+      }
       return result.affectedRows;
     } catch (error) {
       throw new Error(error.message);

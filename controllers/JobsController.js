@@ -18,7 +18,8 @@ const verifyJobPreviewToken = (jobId, token, authHeader) => {
   if (tokenToVerify) {
     // 1. Check if token is a valid admin/recruiter JWT
     try {
-      const decoded = jwt.verify(tokenToVerify, process.env.JWT_SECRET || 'careerfast_secret_key');
+      if (!process.env.JWT_SECRET) return false;
+      const decoded = jwt.verify(tokenToVerify, process.env.JWT_SECRET);
       if (decoded && (decoded.role_id === 1 || decoded.role === 'admin' || decoded.is_admin || decoded.role_id === 2 || decoded.role_id === 3 || decoded.id)) {
         return true;
       }
@@ -283,7 +284,7 @@ const checkUserAutoApprove = async (userId, effectiveRecruiterId = null) => {
           [companyId, companyId, companyId, organization, organization]
         );
         if (compRows[0] && isTruthyFlag(compRows[0].auto_approve)) return true;
-      } catch (e) {}
+      } catch (e) { }
     }
 
     return false;
@@ -484,8 +485,8 @@ const jobPosting = async (request, response) => {
     : [job_category];
   const formattedSkills = Array.isArray(skills) ? skills : [skills];
   const formattedExpReq = Array.isArray(experience_required)
-    ? experience_required
-    : [experience_required];
+    ? experience_required.filter(x => x !== null && x !== undefined && String(x).trim() !== "")
+    : (experience_required && String(experience_required).trim() !== "" ? [experience_required] : []);
   const formattedDiversity = Array.isArray(diversity_hiring)
     ? diversity_hiring
     : [diversity_hiring];
@@ -1158,6 +1159,16 @@ const getJobPosts = async (request, response) => {
 const registrationClose = async (request, response) => {
   const id = request.body?.id || request.query?.id || request.params?.id;
   try {
+    const [jobRows] = await pool.query(`SELECT user_id FROM job_post WHERE id = ?`, [id]);
+    if (!jobRows || jobRows.length === 0) {
+      return response.status(404).send({ message: "Job post not found" });
+    }
+    const isOwner = Number(jobRows[0]?.user_id) === Number(request.user?.id);
+    const isSuperAdmin = request.user?.role_id === 1;
+    if (!isOwner && !isSuperAdmin) {
+      return response.status(403).send({ message: "Access denied. You do not have permission to close this job post." });
+    }
+
     const result = await JobsModel.registrationClose(id);
     response.status(200).send({
       message: "Registration closed successfully",
@@ -1254,7 +1265,9 @@ const updateProject = async (request, response) => {
 };
 
 const updateResume = async (request, response) => {
-  let id = request.body?.id || request.body?.user_id || request.user?.id;
+  let id = (request.user?.role_id !== 1 && request.user?.id)
+    ? request.user.id
+    : (request.body?.id || request.body?.user_id || request.user?.id);
   let resume = request.body?.resume;
 
   if (request.file) {
@@ -1683,8 +1696,8 @@ const updateEligibility = async (request, response) => {
     bonus_format,
   } = request.body;
   const formattedExpReq = Array.isArray(experience_required)
-    ? experience_required
-    : [experience_required];
+    ? experience_required.filter(x => x !== null && x !== undefined && String(x).trim() !== "")
+    : (experience_required && String(experience_required).trim() !== "" ? [experience_required] : []);
   const formattedDiversity = Array.isArray(diversity_hiring)
     ? diversity_hiring
     : [diversity_hiring];
@@ -2262,7 +2275,9 @@ const updateJobPosting = async (request, response) => {
   const formattedDuration = Array.isArray(duration_period) ? duration_period : (duration_period ? [duration_period] : ["Permanent"]);
   const formattedJobCategory = Array.isArray(job_category) ? job_category : (job_category ? [job_category] : []);
   const formattedSkills = Array.isArray(skills) ? skills : (skills ? [skills] : []);
-  const formattedExpReq = Array.isArray(experience_required) ? experience_required : (experience_required ? [experience_required] : []);
+  const formattedExpReq = Array.isArray(experience_required)
+    ? experience_required.filter(x => x !== null && x !== undefined && String(x).trim() !== "")
+    : (experience_required && String(experience_required).trim() !== "" ? [experience_required] : []);
   const formattedDiversity = Array.isArray(diversity_hiring) ? diversity_hiring : (diversity_hiring ? [diversity_hiring] : []);
   const formattedBenefits = Array.isArray(benefits) ? benefits : (benefits ? [benefits] : []);
   const formatQuestions = Array.isArray(questions)
@@ -2390,7 +2405,15 @@ const deleteJobPost = async (req, res) => {
   const id = req.body?.id || req.query?.id || req.params?.id;
   try {
     const [jobRows] = await pool.query(`SELECT user_id FROM job_post WHERE id = ?`, [id]);
+    if (!jobRows || jobRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Job post not found" });
+    }
     const recruiterUserId = jobRows[0]?.user_id;
+    const isOwner = Number(recruiterUserId) === Number(req.user?.id);
+    const isSuperAdmin = req.user?.role_id === 1;
+    if (!isOwner && !isSuperAdmin) {
+      return res.status(403).json({ success: false, message: "Access denied. You do not have permission to delete this job post." });
+    }
 
     const result = await JobsModel.deleteJobPost(id);
 
@@ -2420,8 +2443,17 @@ const deleteJobPost = async (req, res) => {
 const makeJobActive = async (request, response) => {
   const { id } = request.body;
   try {
-    // 🛡️ Enforce active jobs limit from subscription plan
     const [jobRows] = await pool.query(`SELECT user_id FROM job_post WHERE id = ?`, [id]);
+    if (!jobRows || jobRows.length === 0) {
+      return response.status(404).json({ message: "Job post not found" });
+    }
+    const isOwner = Number(jobRows[0]?.user_id) === Number(request.user?.id);
+    const isSuperAdmin = request.user?.role_id === 1;
+    if (!isOwner && !isSuperAdmin) {
+      return response.status(403).json({ message: "Access denied. You do not have permission to modify this job post." });
+    }
+
+    // 🛡️ Enforce active jobs limit from subscription plan
     if (jobRows.length > 0) {
       const recruiterUserId = jobRows[0].user_id;
       const [subRows] = await pool.query(`
@@ -2614,7 +2646,7 @@ const batchEnrichJobsWithRecruiterInfo = async (rawList) => {
       return {
         ...job,
         recruiter_name: (job.recruiter_name && job.recruiter_name.trim()) ? job.recruiter_name : (fullName || job.recruiter_name),
-          posted_by_name: fullName || job.recruiter_name,
+        posted_by_name: fullName || job.recruiter_name,
         recruiter_email: user?.email,
         recruiter_plan_name: planName,
         recruiter_active_limit: activeLimit,

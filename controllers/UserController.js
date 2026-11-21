@@ -60,8 +60,17 @@ const createUser = async (request, response) => {
     });
   }
 
+  // Security: Restrict public registration strictly to Candidate (2) or Recruiter (3)
+  if (Number(role_id) === 1) {
+    return response.status(403).json({
+      success: false,
+      message: "Administrative accounts cannot be created via public registration.",
+    });
+  }
+  const effectiveRoleId = Number(role_id) === 3 ? 3 : 2;
+
   // Recruiter role strictly requires an official corporate work email
-  if (role_id == 3) {
+  if (effectiveRoleId === 3) {
     const domain = (email || "").split("@")[1]?.toLowerCase();
     const blockedPersonalDomains = [
       "gmail.com",
@@ -124,12 +133,12 @@ const createUser = async (request, response) => {
       password,
       organization,
       organization_type_id,
-      role_id,
+      effectiveRoleId,
       extraData
     );
 
     // If candidate registered (role_id 2 or not 3), trigger welcome email notification with professional UI
-    if (role_id == 2 || role_id != 3) {
+    if (effectiveRoleId == 2) {
       sendCandidateWelcomeEmail({
         email,
         first_name,
@@ -160,10 +169,17 @@ const createUser = async (request, response) => {
 };
 
 const updateUser = async (request, response) => {
+  const targetId = request.params.id;
+  const isSuperAdmin = request.user?.role_id === 1;
+  const isSelf = Number(request.user?.id) === Number(targetId);
+  if (!isSuperAdmin && !isSelf) {
+    return response.status(403).json({ message: "Access denied. You can only update your own profile." });
+  }
+
   const { id, name, email, gender } = request.body;
   try {
     const result = await userModel.updateUser(
-      request.params.id,
+      targetId,
       name,
       email,
       gender
@@ -181,8 +197,15 @@ const updateUser = async (request, response) => {
 };
 
 const deleteUser = async (request, response) => {
+  const targetId = request.params.id;
+  const isSuperAdmin = request.user?.role_id === 1;
+  const isSelf = Number(request.user?.id) === Number(targetId);
+  if (!isSuperAdmin && !isSelf) {
+    return response.status(403).json({ message: "Access denied. Admin authorization required." });
+  }
+
   try {
-    const result = await userModel.deleteUser(request.params.id);
+    const result = await userModel.deleteUser(targetId);
     response.status(200).json({
       message: "User has been deleted",
       data: result,
@@ -261,9 +284,13 @@ const insertProfile = async (request, response) => {
 
   console.log("Received profile data:", request.body);
 
+  const effectiveUserId = (request.user?.role_id !== 1 && request.user?.id) 
+    ? request.user.id 
+    : (user_id || request.user?.id);
+
   const missingFields = [];
   if (!profile_image) missingFields.push("profile_image");
-  if (user_id === undefined || user_id === null) missingFields.push("user_id");
+  if (effectiveUserId === undefined || effectiveUserId === null) missingFields.push("user_id");
   if (!country) missingFields.push("country");
   if (!state) missingFields.push("state");
   if (!city) missingFields.push("city");
@@ -287,7 +314,7 @@ const insertProfile = async (request, response) => {
   try {
     const result = await userModel.insertProfile(
       profile_image,
-      user_id,
+      effectiveUserId,
       country,
       state,
       city,
@@ -339,8 +366,12 @@ const getHrProfile = async (request, response) => {
 };
 
 const insertHrProfile = async (request, response) => {
+  const user_id = request.body?.user_id || request.user?.id;
+  if (!user_id) {
+    return response.status(400).json({ message: "Bad Request: Missing user_id" });
+  }
+
   const {
-    user_id,
     profile_image,
     banner_image,
     company_name,
@@ -354,11 +385,24 @@ const insertHrProfile = async (request, response) => {
     social_links,
     map_location,
     contact_phone,
-    contact_email
+    contact_email,
+    first_name,
+    last_name,
+    headline,
+    address1,
+    address2,
+    city,
+    state,
+    country,
+    pincode,
+    skills,
+    total_years,
+    preferred_roles,
+    career_level,
   } = request.body;
 
   try {
-    await userModel.insertHrProfile(
+    await userModel.insertHrProfile({
       user_id,
       profile_image,
       banner_image,
@@ -373,15 +417,29 @@ const insertHrProfile = async (request, response) => {
       social_links,
       map_location,
       contact_phone,
-      contact_email
-    );
+      contact_email,
+      first_name,
+      last_name,
+      headline,
+      address1,
+      address2,
+      city,
+      state,
+      country,
+      pincode,
+      skills,
+      total_years,
+      preferred_roles,
+      career_level,
+    });
 
-    response.status(201).json({
-      message: "HR Profile inserted successfully!",
+    response.status(200).json({
+      message: "HR Profile updated successfully!",
     });
   } catch (error) {
+    console.error("Error inserting/updating HR Profile:", error);
     response.status(500).json({
-      message: "Error while inserting HR profile",
+      message: "Error while updating HR profile",
       details: error.message,
     });
   }
@@ -404,10 +462,16 @@ const updateSocialLinks = async (request, response) => {
 
 // Get applied job list for candidate
 const getUserAppliedJobs = async (request, response) => {
-  const { userId } = request.query;
+  const targetUserId = (request.user?.role_id !== 1 && request.user?.id) 
+    ? request.user.id 
+    : (request.query.userId || request.user?.id);
+
+  if (!targetUserId) {
+    return response.status(400).send({ message: "User ID required" });
+  }
 
   try {
-    const result = await userModel.getUserAppliedJobs(userId);
+    const result = await userModel.getUserAppliedJobs(targetUserId);
 
     const safeParse = (val, fallback = []) => {
       if (!val) return fallback;
@@ -448,6 +512,20 @@ const updateUserAppliedJobStatus = async (request, response) => {
   const { post_id, user_id, status } = request.body;
 
   try {
+    // Authorization: Verify recruiter owns this job post or is super admin
+    const [jobRowsCheck] = await pool.query(
+      `SELECT user_id, job_title, company_name FROM job_post WHERE id = ?`,
+      [post_id]
+    );
+    if (!jobRowsCheck || jobRowsCheck.length === 0) {
+      return response.status(404).json({ message: "Job post not found" });
+    }
+    const isOwner = Number(jobRowsCheck[0].user_id) === Number(request.user?.id);
+    const isSuperAdmin = request.user?.role_id === 1;
+    if (!isOwner && !isSuperAdmin) {
+      return response.status(403).json({ message: "Access denied. Only the recruiter who posted this job or an administrator can update candidate statuses." });
+    }
+
     const result = await userModel.updateUserAppliedJobStatus(
       post_id,
       user_id,
@@ -728,7 +806,9 @@ const isProfileUpdated = async (request, response) => {
 };
 
 const updateProfileImage = async (request, response) => {
-  let user_id = request.body?.user_id;
+  let user_id = (request.user?.role_id !== 1 && request.user?.id)
+    ? request.user.id
+    : (request.body?.user_id || request.user?.id);
   let profile_image = request.body?.profile_image;
 
   if (request.file) {
@@ -755,7 +835,10 @@ const updateProfileImage = async (request, response) => {
 };
 
 const updateBanner = async (request, response) => {
-  const { user_id, banner_color, banner_image } = request.body;
+  const user_id = (request.user?.role_id !== 1 && request.user?.id)
+    ? request.user.id
+    : (request.body?.user_id || request.user?.id);
+  const { banner_color, banner_image } = request.body;
   try {
     const result = await userModel.updateBanner(user_id, banner_color, banner_image);
     response.status(200).send({
@@ -839,6 +922,16 @@ const getResume = async (request, response) => {
   try {
     const userId = request.params.id;
     if (!userId) return response.status(400).send("User ID required");
+
+    // Authorization check: Candidate themselves, Recruiter (role 3), or Admin (role 1)
+    const requestingUser = request.user;
+    if (requestingUser) {
+      const isOwner = Number(requestingUser.id) === Number(userId);
+      const isRecruiterOrAdmin = Number(requestingUser.role_id) === 1 || Number(requestingUser.role_id) === 3;
+      if (!isOwner && !isRecruiterOrAdmin) {
+        return response.status(403).send("Access denied. You are not authorized to view this resume.");
+      }
+    }
 
     const [rows] = await pool.query(
       "SELECT resume, first_name, last_name FROM users WHERE id = ? LIMIT 1",

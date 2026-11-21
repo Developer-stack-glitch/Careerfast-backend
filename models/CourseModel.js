@@ -28,7 +28,7 @@ const CourseModel = {
                 return { success: true, data: cached.data };
             }
 
-            let sql = "SELECT id, title, description, link, image, content, slug, category, created_at FROM courses ORDER BY id DESC";
+            let sql = "SELECT id, title, link, image, slug, category, created_at FROM courses ORDER BY id DESC";
             const params = [];
             if (limit && !isNaN(limit)) {
                 sql += " LIMIT ?";

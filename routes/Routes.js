@@ -7,7 +7,8 @@ const LoginController = require("../controllers/LoginController");
 const RoleController = require("../controllers/RoleController");
 const OrganizationController = require("../controllers/OrganizationController");
 const IndustryController = require("../controllers/IndustryController");
-const { verifyToken, verifySuperAdmin } = require("../Validation/Validation");
+const { verifyToken, verifySuperAdmin, verifyRecruiterOrAdmin } = require("../Validation/Validation");
+const { authLimiter, otpLimiter } = require("../middlewares/rateLimiter");
 const JobsController = require("../controllers/JobsController");
 const EmailController = require("../controllers/EmailController");
 const NotificationController = require("../controllers/NotificationController");
@@ -159,12 +160,12 @@ router.post("/nvites/:id/resend", verifyToken, NvitesController.resendNvite);
 
 
 // User module APIs
-router.get("/getUsers", userController.getUsers);
+router.get("/getUsers", verifyToken, verifyRecruiterOrAdmin, userController.getUsers);
 router.post("/createUser", userController.createUser);
-router.put("/updateUser/:id", userController.updateUser);
-router.put("/user/status/:id", verifyToken, userController.updateUserStatus);
-router.delete("/deleteUser/:id", userController.deleteUser);
-router.post("/deleteUser/:id", userController.deleteUser);
+router.put("/updateUser/:id", verifyToken, userController.updateUser);
+router.put("/user/status/:id", verifyToken, verifySuperAdmin, userController.updateUserStatus);
+router.delete("/deleteUser/:id", verifyToken, verifySuperAdmin, userController.deleteUser);
+router.post("/deleteUser/:id", verifyToken, verifySuperAdmin, userController.deleteUser);
 
 // Role module APIs
 router.get("/getRoles", RoleController.getRoles);
@@ -182,16 +183,16 @@ router.get("/industry-types", IndustryController.getIndustryTypes);
 // Billing Plan APIs
 router.get("/getBillingPlans", BillingPlanController.getBillingPlans);
 router.get("/pricing/plans", BillingPlanController.getBillingPlans);
-router.put("/updateBillingPlan", verifyToken, BillingPlanController.updateBillingPlan);
+router.put("/updateBillingPlan", verifyToken, verifySuperAdmin, BillingPlanController.updateBillingPlan);
 
 // Settings APIs
 router.get("/settings/get", SettingsController.getSettings);
-router.put("/settings/update", verifyToken, SettingsController.updateSettings);
+router.put("/settings/update", verifyToken, verifySuperAdmin, SettingsController.updateSettings);
 
 // Integrations APIs
 const IntegrationsController = require("../controllers/IntegrationsController");
-router.get("/integrations/get", verifyToken, IntegrationsController.getIntegrations);
-router.put("/integrations/update", verifyToken, IntegrationsController.updateIntegrations);
+router.get("/integrations/get", verifyToken, verifySuperAdmin, IntegrationsController.getIntegrations);
+router.put("/integrations/update", verifyToken, verifySuperAdmin, IntegrationsController.updateIntegrations);
 
 //Job module APIs
 router.post("/job/nature/add", verifyToken, JobsController.insertJobNature);
@@ -237,12 +238,13 @@ router.get("/getSalaryType", verifyToken, JobsController.getSalaryType);
 
 // Job posting module start
 
-router.get("/userAppliedJobs", userController.getUserAppliedJobs);
+router.get("/userAppliedJobs", verifyToken, userController.getUserAppliedJobs);
 router.put(
   "/updateUserAppliedJobStatus",
+  verifyToken,
   userController.updateUserAppliedJobStatus
 );
-router.get("/getUserJobPostStatus", userController.getUserJobPostStatus);
+router.get("/getUserJobPostStatus", verifyToken, userController.getUserJobPostStatus);
 router.post("/jobPosting", verifyToken, JobsController.jobPosting);
 router.put("/updateJobPosting", verifyToken, JobsController.updateJobPosting);
 router.post("/applyforjob", verifyToken, JobsController.applyForJob);
@@ -270,10 +272,10 @@ router.put("/registrationClose", verifyToken, JobsController.registrationClose);
 router.put("/makeJobActive", verifyToken, JobsController.makeJobActive);
 
 // Job Approval Endpoints
-router.get("/getPendingJobs", verifyToken, JobsController.getPendingJobs);
-router.put("/approveJob/:id", verifyToken, JobsController.approveJob);
-router.put("/approveAllJobs", verifyToken, JobsController.approveAllJobs);
-router.put("/rejectJob/:id", verifyToken, JobsController.rejectJob);
+router.get("/getPendingJobs", verifyToken, verifySuperAdmin, JobsController.getPendingJobs);
+router.put("/approveJob/:id", verifyToken, verifySuperAdmin, JobsController.approveJob);
+router.put("/approveAllJobs", verifyToken, verifySuperAdmin, JobsController.approveAllJobs);
+router.put("/rejectJob/:id", verifyToken, verifySuperAdmin, JobsController.rejectJob);
 
 // Job posting module end
 
@@ -380,8 +382,8 @@ router.get("/getTrendingSearches", JobsController.getTrendingSearches);
 router.get("/getSearchSuggestions", JobsController.getSearchSuggestions);
 router.get("/getUniqueCompanies", JobsController.getUniqueCompanies);
 router.get("/getTopCompanies", JobsController.getTopCompanies);
-router.get("/superadmin/dashboard-stats", verifyToken, JobsController.getSuperAdminDashboardData);
-router.get("/StatsOfPost", verifyToken, JobsController.StatsOfPost);
+router.get("/superadmin/dashboard-stats", verifyToken, verifySuperAdmin, JobsController.getSuperAdminDashboardData);
+router.get("/StatsOfPost", verifyToken, verifySuperAdmin, JobsController.StatsOfPost);
 router.get("/getLocations", JobsController.getLocations);
 router.get(
   "/getAllCandidateByRecruiter",
@@ -391,11 +393,14 @@ router.get(
 
 router.post(
   "/sendAppliedNotification",
+  verifyToken,
   NotificationController.sendAppliedNotification
 );
-router.post("/subscribe-topic", NotificationController.subscribeToTopic);
+router.post("/subscribe-topic", verifyToken, NotificationController.subscribeToTopic);
 router.post(
   "/broadcast-notification",
+  verifyToken,
+  verifySuperAdmin,
   NotificationController.sendTopicNotification
 );
 
@@ -418,7 +423,7 @@ router.get("/candidates/search", CandidateSearchController.searchCandidates);
 router.get("/candidates/filter-options", CandidateSearchController.getFilterOptions);
 router.get("/candidates/companies-lookup", CandidateSearchController.lookupCompanies);
 router.get("/users/profile-image/:id", userController.getProfileImage);
-router.get("/users/resume/:id", userController.getResume);
+router.get("/users/resume/:id", verifyToken, userController.getResume);
 // Candidate Folders
 router.get("/candidates/folders", verifyToken, CandidateSearchController.getFolders);
 router.post("/candidates/folders", verifyToken, CandidateSearchController.createFolder);
@@ -431,24 +436,24 @@ router.delete("/candidates/folders/:id/candidates/:candidateId", verifyToken, Ca
 
 // HR Dashboard APIs
 const HrDashboardController = require("../controllers/HrDashboardController");
-router.get("/hr/dashboard/summary", HrDashboardController.getDashboardSummary);
-router.post("/hr/dashboard/searches", HrDashboardController.saveSearch);
-router.delete("/hr/dashboard/searches/clear", HrDashboardController.clearSearches);
-router.delete("/hr/dashboard/searches/:id", HrDashboardController.deleteSearch);
-router.get("/hr/dashboard/campaigns", HrDashboardController.getCampaigns);
-router.get("/hr/dashboard/credits", HrDashboardController.getCredits);
+router.get("/hr/dashboard/summary", verifyToken, verifyRecruiterOrAdmin, HrDashboardController.getDashboardSummary);
+router.post("/hr/dashboard/searches", verifyToken, verifyRecruiterOrAdmin, HrDashboardController.saveSearch);
+router.delete("/hr/dashboard/searches/clear", verifyToken, verifyRecruiterOrAdmin, HrDashboardController.clearSearches);
+router.delete("/hr/dashboard/searches/:id", verifyToken, verifyRecruiterOrAdmin, HrDashboardController.deleteSearch);
+router.get("/hr/dashboard/campaigns", verifyToken, verifyRecruiterOrAdmin, HrDashboardController.getCampaigns);
+router.get("/hr/dashboard/credits", verifyToken, verifyRecruiterOrAdmin, HrDashboardController.getCredits);
 
 // ==========================================
 // 🎫 Support Ticket Routes
 // ==========================================
 const SupportTicketController = require("../controllers/SupportTicketController");
 router.post("/support/tickets", SupportTicketController.createTicket);
-router.get("/support/tickets", SupportTicketController.getAllTickets);
-router.get("/support/tickets/stats", SupportTicketController.getStats);
-router.get("/support/tickets/:id", SupportTicketController.getTicketById);
-router.put("/support/tickets/:id/status", SupportTicketController.updateStatus);
-router.post("/support/tickets/:id/messages", SupportTicketController.addMessage);
-router.delete("/support/tickets/:id", SupportTicketController.deleteTicket);
+router.get("/support/tickets", verifyToken, verifySuperAdmin, SupportTicketController.getAllTickets);
+router.get("/support/tickets/stats", verifyToken, verifySuperAdmin, SupportTicketController.getStats);
+router.get("/support/tickets/:id", verifyToken, SupportTicketController.getTicketById);
+router.put("/support/tickets/:id/status", verifyToken, verifySuperAdmin, SupportTicketController.updateStatus);
+router.post("/support/tickets/:id/messages", verifyToken, SupportTicketController.addMessage);
+router.delete("/support/tickets/:id", verifyToken, verifySuperAdmin, SupportTicketController.deleteTicket);
 
 module.exports = router;
 

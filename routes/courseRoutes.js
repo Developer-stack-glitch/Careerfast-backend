@@ -1,10 +1,11 @@
 const express = require("express");
 const { addCourse, getCourses, getCourseBySlug, updateCourse, deleteCourse } = require("../controllers/CourseController");
+const { verifyToken, verifySuperAdmin } = require("../Validation/Validation");
 
 const router = express.Router();
 
 // POST new course
-router.post("/", addCourse);
+router.post("/", verifyToken, verifySuperAdmin, addCourse);
 
 // GET all courses
 router.get("/", getCourses);
@@ -13,9 +14,9 @@ router.get("/", getCourses);
 router.get("/:slug", getCourseBySlug);
 
 // PUT update course
-router.put("/:id", updateCourse);
+router.put("/:id", verifyToken, verifySuperAdmin, updateCourse);
 
 // DELETE course
-router.delete("/:id", deleteCourse);
+router.delete("/:id", verifyToken, verifySuperAdmin, deleteCourse);
 
 module.exports = router;

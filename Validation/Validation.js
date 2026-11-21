@@ -91,9 +91,23 @@ const verifySuperAdmin = async (req, res, next) => {
   }
 };
 
+const verifyRecruiterOrAdmin = async (req, res, next) => {
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({ success: false, message: "Access denied. Authentication required." });
+  }
+
+  const roleId = Number(req.user.role_id);
+  if (roleId === 1 || roleId === 3 || req.user.role_name === 'SUPER-ADMIN' || req.user.role_name === 'SUPERADMIN' || req.user.role_name === 'RECRUITER') {
+    return next();
+  }
+
+  return res.status(403).json({ success: false, message: "Access denied. Recruiter or Admin clearance required." });
+};
+
 module.exports = {
   verifyToken,
   verifySuperAdmin,
+  verifyRecruiterOrAdmin,
   convertUTCDateToLocalDate,
 };
 

@@ -13,7 +13,7 @@ const transporter = nodemailer.createTransport({
   service: process.env.SMTP_HOST || "gmail",
   auth: {
     user: process.env.SMTP_USER || process.env.SMTP_FROM || "careerfastcontact@gmail.com",
-    pass: process.env.SMTP_PASS || "mjzp tqcj gxld yqme",
+    pass: process.env.SMTP_PASS,
   },
 });
 
@@ -153,7 +153,7 @@ const VerifyEmail = async (email) => {
     return { 
       success: true, 
       message: "Verification code sent to your work email address", 
-      dev_otp: otp 
+
     };
   } catch (error) {
     throw new Error(error.message);

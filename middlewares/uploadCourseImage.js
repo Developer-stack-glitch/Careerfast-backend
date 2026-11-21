@@ -12,10 +12,27 @@ if (!fs.existsSync(uploadPath)) {
 const storage = multer.diskStorage({
     destination: uploadPath,
     filename: (req, file, cb) => {
-        cb(null, Date.now() + path.extname(file.originalname));
+        const safeExt = path.extname(file.originalname).toLowerCase().replace(/[^a-z0-9.]/g, "");
+        cb(null, Date.now() + safeExt);
     },
 });
 
-const upload = multer({ storage });
+const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+const allowedExtensions = [".jpg", ".jpeg", ".png", ".webp"];
+
+const fileFilter = (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowedMimeTypes.includes(file.mimetype) && allowedExtensions.includes(ext)) {
+        cb(null, true);
+    } else {
+        cb(new Error("Invalid file type. Only JPEG, PNG, and WebP images are allowed."));
+    }
+};
+
+const upload = multer({
+    storage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+    fileFilter,
+});
 
 module.exports = upload.single("image");

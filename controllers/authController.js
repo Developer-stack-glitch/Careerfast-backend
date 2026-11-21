@@ -6,7 +6,8 @@ exports.googleLogin = async (req, res) => {
   try {
     const token = req.body?.token || req.body?.credential;
     const fcm_token = req.body?.fcm_token;
-    const targetRoleId = req.body?.role_id ? parseInt(req.body.role_id, 10) : 2; // Default CANDIDATE (2)
+    const rawRoleId = req.body?.role_id ? parseInt(req.body.role_id, 10) : 2;
+    const targetRoleId = rawRoleId === 3 ? 3 : 2; // Public registration strictly restricted to candidate (2) or recruiter (3)
 
     if (!token) {
       return res.status(400).json({
@@ -196,13 +197,20 @@ exports.googleLogin = async (req, res) => {
     }
 
     // Generate JWT
-    const jwtSecret =
-      process.env.JWT_SECRET || "8f9c2d2f3a4b5c6d7e8f9g0h1i2j3k4l";
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      throw new Error("JWT_SECRET environment variable is not configured.");
+    }
     const accessToken = jwt.sign(
       { id: user.id, email: user.email, role_id: user.role_id },
       jwtSecret,
       { expiresIn: process.env.JWT_EXPIRES_IN || "30d" }
     );
+
+    // Sanitize user object to never leak password hash
+    if (user && user.password) {
+      delete user.password;
+    }
 
     return res.status(200).json({
       success: true,

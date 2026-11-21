@@ -268,7 +268,6 @@ const sendLoginOTP = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: `OTP sent successfully to ${recipientLabel}`,
-      dev_otp: otp,
       target: recipientLabel,
     });
   } catch (err) {
@@ -307,7 +306,7 @@ const verifyLoginOTP = async (req, res) => {
 
     // Fetch full user record
     const [result] = await pool.query(
-      `SELECT u.id, u.first_name, u.last_name, u.phone_code, u.phone, u.email, u.password, u.organization, o.name AS organization_type, u.is_active, u.role_id, r.name AS role_name, COALESCE(h.profile_image, u.profile_image) AS profile_image, CASE WHEN u.is_email_verified = 1 THEN 1 ELSE 0 END AS is_email_verified,
+      `SELECT u.id, u.first_name, u.last_name, u.phone_code, u.phone, u.email, u.organization, o.name AS organization_type, u.is_active, u.role_id, r.name AS role_name, COALESCE(h.profile_image, u.profile_image) AS profile_image, CASE WHEN u.is_email_verified = 1 THEN 1 ELSE 0 END AS is_email_verified,
        COALESCE(ap.is_super_admin, CASE WHEN u.id = 1 THEN 1 ELSE 0 END) AS is_super_admin,
        COALESCE(ap.role_title, 'Administrator') AS admin_role_title,
        COALESCE(ap.department, 'Management') AS admin_department,

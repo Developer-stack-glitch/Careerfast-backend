@@ -41,7 +41,7 @@ const LoginModel = {
         throw new Error("Your recruiter account has been suspended. Please contact the administrator.");
       }
       const [result] = await pool.query(
-        `SELECT u.id, u.first_name, u.last_name, u.phone_code, u.phone, u.email, u.password, 
+        `SELECT u.id, u.first_name, u.last_name, u.phone_code, u.phone, u.email, 
          COALESCE(h.company_name, u.organization) AS organization, 
          u.organization_type_id,
          COALESCE(h.organization_type, o.name) AS organization_type, 
