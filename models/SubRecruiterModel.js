@@ -2,6 +2,11 @@ const pool = require("../config/dbConfig");
 const bcrypt = require("bcrypt");
 const { sendRecruiterWelcomeEmail } = require("./EmailModel");
 
+const cleanPhone = (val) => {
+  if (!val) return '';
+  return String(val).trim().slice(0, 25);
+};
+
 const SubRecruiterModel = {
   // Get all sub-recruiters for a main recruiter along with seat quota metrics and pool breakdown
   getTeamByMainRecruiterId: async (mainRecruiterId) => {
@@ -475,7 +480,7 @@ const SubRecruiterModel = {
           last_name.trim(),
           email.trim().toLowerCase(),
           hashedPassword,
-          phone || '',
+          cleanPhone(phone || ''),
           organization,
           companyId,
           targetMasterId,

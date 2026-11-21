@@ -3,6 +3,11 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { sendRecruiterWelcomeEmail } = require("./EmailModel");
 
+const cleanPhone = (val) => {
+  if (!val) return '';
+  return String(val).trim().slice(0, 25);
+};
+
 const RecruiterManagementModel = {
   getAllRecruiters: async (filters = {}) => {
     try {
@@ -603,7 +608,7 @@ const RecruiterManagementModel = {
           [
             company_name.trim(),
             company_email || email || '',
-            company_phone || mobile_number || '',
+            cleanPhone(company_phone || mobile_number || ''),
             website || null,
             industry || 'Information Technology',
             company_type || 'Corporate',
@@ -644,7 +649,7 @@ const RecruiterManagementModel = {
         lastName,
         email.trim().toLowerCase(),
         hashedPassword,
-        mobile_number || '',
+        cleanPhone(mobile_number || company_phone || ''),
         company_name || '',
         realCompanyId,
         subRecruiterLimit
@@ -665,7 +670,7 @@ const RecruiterManagementModel = {
         company_type || '',
         industry || '',
         website || '',
-        company_phone || mobile_number || '',
+        cleanPhone(company_phone || mobile_number || ''),
         company_email || email || '',
         company_logo || null,
         gst_number || null
@@ -819,7 +824,7 @@ const RecruiterManagementModel = {
             extraLast,
             extraMaster.email.trim().toLowerCase(),
             extraHashed,
-            extraMaster.phone || '',
+            cleanPhone(extraMaster.phone || ''),
             company_name || '',
             realCompanyId,
             extraSeats
@@ -884,7 +889,7 @@ const RecruiterManagementModel = {
             subLast,
             sub.email.trim().toLowerCase(),
             subHashed,
-            sub.phone || '',
+            cleanPhone(sub.phone || ''),
             company_name || '',
             realCompanyId,
             targetMasterId
@@ -1683,7 +1688,7 @@ const RecruiterManagementModel = {
           last_name.trim(),
           email.trim().toLowerCase(),
           hashedPassword,
-          phone || '',
+          cleanPhone(phone || ''),
           companyName,
           companyId,
           assignedSeats
@@ -2349,7 +2354,7 @@ const RecruiterManagementModel = {
           (last_name || '').trim(),
           email.trim().toLowerCase(),
           hashedPassword,
-          phone || '',
+          cleanPhone(phone || ''),
           companyName,
           companyId,
           requestedSeats,
