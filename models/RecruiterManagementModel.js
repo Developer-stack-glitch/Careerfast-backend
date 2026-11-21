@@ -481,13 +481,33 @@ const RecruiterManagementModel = {
         subscription_status = 'Active'
       } = payload;
 
-      // 1. Check existing email
+      // 1. Check all emails for duplicates and existing accounts in DB
+      const allEmailsToCheck = [email.trim().toLowerCase()];
+      if (Array.isArray(payload.additional_master_recruiters)) {
+        payload.additional_master_recruiters.forEach(m => {
+          if (m?.email && m.email.trim()) allEmailsToCheck.push(m.email.trim().toLowerCase());
+        });
+      }
+      if (Array.isArray(payload.sub_recruiters)) {
+        payload.sub_recruiters.forEach(s => {
+          if (s?.email && s.email.trim()) allEmailsToCheck.push(s.email.trim().toLowerCase());
+        });
+      }
+
+      const emailSet = new Set();
+      for (const e of allEmailsToCheck) {
+        if (emailSet.has(e)) {
+          throw new Error(`Duplicate email address "${e}" provided in account creation list.`);
+        }
+        emailSet.add(e);
+      }
+
       const [existingUser] = await connection.query(
-        `SELECT id FROM users WHERE email = ?`,
-        [email.trim().toLowerCase()]
+        `SELECT id, email FROM users WHERE email IN (?)`,
+        [allEmailsToCheck]
       );
       if (existingUser.length > 0) {
-        throw new Error(`A user with email ${email} already exists.`);
+        throw new Error(`A user with email "${existingUser[0].email}" already exists.`);
       }
 
       // 2. Fetch Plan to calculate defaults & limits
@@ -767,18 +787,187 @@ const RecruiterManagementModel = {
         })
       ]);
 
+      // 13. Process Additional Master Recruiters (if any)
+      const createdMasters = [{
+        id: newUserId,
+        name: `${firstName} ${lastName}`.trim() || recruiter_name || 'Primary Master Recruiter',
+        email: email.trim().toLowerCase(),
+        password,
+        designation: designation || 'Primary Master Recruiter',
+        allocated_seats: subRecruiterLimit,
+        is_primary: true
+      }];
+
+      if (Array.isArray(payload.additional_master_recruiters) && payload.additional_master_recruiters.length > 0) {
+        for (const extraMaster of payload.additional_master_recruiters) {
+          if (!extraMaster.email || !extraMaster.password || !extraMaster.name) continue;
+          const extraHashed = await bcrypt.hash(extraMaster.password, 10);
+          const extraNameParts = extraMaster.name.trim().split(/\s+/);
+          const extraFirst = extraNameParts[0] || 'Master';
+          const extraLast = extraNameParts.slice(1).join(' ') || '';
+          const extraSeats = extraMaster.allocated_seats !== undefined && extraMaster.allocated_seats !== ''
+            ? Number(extraMaster.allocated_seats)
+            : subRecruiterLimit;
+
+          const [extraUserResult] = await connection.query(`
+            INSERT INTO users (
+              first_name, last_name, email, password, phone, phone_code,
+              role_id, is_active, organization, company_id, allocated_seats, master_recruiter_id, created_date, is_email_verified
+            ) VALUES (?, ?, ?, ?, ?, '+91', 3, 1, ?, ?, ?, NULL, NOW(), 1)
+          `, [
+            extraFirst,
+            extraLast,
+            extraMaster.email.trim().toLowerCase(),
+            extraHashed,
+            extraMaster.phone || '',
+            company_name || '',
+            realCompanyId,
+            extraSeats
+          ]);
+          const extraUserId = extraUserResult.insertId;
+
+          // Link subscription
+          await connection.query(`
+            INSERT INTO recruiter_subscriptions (
+              recruiter_id, company_id, plan_id, billing_cycle, price_paid,
+              start_date, expiry_date, status, payment_status
+            ) VALUES (?, ?, ?, ?, 0, ?, ?, ?, 'Paid')
+          `, [
+            extraUserId,
+            realCompanyId,
+            plan.id,
+            billing_cycle,
+            formattedStart,
+            formattedExpiry,
+            subscription_status
+          ]);
+
+          createdMasters.push({
+            id: extraUserId,
+            name: extraMaster.name.trim(),
+            email: extraMaster.email.trim().toLowerCase(),
+            password: extraMaster.password,
+            designation: extraMaster.designation || 'Master Recruiter',
+            allocated_seats: extraSeats,
+            is_primary: false
+          });
+        }
+      }
+
+      // 14. Process Sub-Recruiter Team Logins (if any)
+      const createdSubs = [];
+      if (Array.isArray(payload.sub_recruiters) && payload.sub_recruiters.length > 0) {
+        for (const sub of payload.sub_recruiters) {
+          if (!sub.email || !sub.password || !sub.name) continue;
+
+          // Determine target master recruiter ID
+          let targetMasterId = newUserId;
+          if (sub.master_email) {
+            const foundMaster = createdMasters.find(m => m.email.toLowerCase() === sub.master_email.trim().toLowerCase());
+            if (foundMaster) targetMasterId = foundMaster.id;
+          } else if (sub.master_index !== undefined && createdMasters[sub.master_index]) {
+            targetMasterId = createdMasters[sub.master_index].id;
+          }
+
+          const subHashed = await bcrypt.hash(sub.password, 10);
+          const subNameParts = sub.name.trim().split(/\s+/);
+          const subFirst = subNameParts[0] || 'Sub';
+          const subLast = subNameParts.slice(1).join(' ') || '';
+
+          const [subUserResult] = await connection.query(`
+            INSERT INTO users (
+              first_name, last_name, email, password, phone, phone_code,
+              role_id, is_active, organization, company_id, master_recruiter_id, created_date, is_email_verified
+            ) VALUES (?, ?, ?, ?, ?, '+91', 3, 1, ?, ?, ?, NOW(), 1)
+          `, [
+            subFirst,
+            subLast,
+            sub.email.trim().toLowerCase(),
+            subHashed,
+            sub.phone || '',
+            company_name || '',
+            realCompanyId,
+            targetMasterId
+          ]);
+          const subUserId = subUserResult.insertId;
+
+          const rolePreset = sub.role_preset || 'recruiter';
+          const finalPermissions = {
+            can_post_jobs: Boolean(sub.permissions?.can_post_jobs ?? (rolePreset === 'team_admin' || rolePreset === 'recruiter')),
+            can_view_resumes: Boolean(sub.permissions?.can_view_resumes ?? true),
+            can_download_resumes: Boolean(sub.permissions?.can_download_resumes ?? (rolePreset === 'team_admin' || rolePreset === 'recruiter')),
+            can_contact_candidates: Boolean(sub.permissions?.can_contact_candidates ?? (rolePreset === 'team_admin' || rolePreset === 'recruiter')),
+            can_export_excel: Boolean(sub.permissions?.can_export_excel ?? (rolePreset === 'team_admin' || rolePreset === 'recruiter')),
+            can_manage_applications: Boolean(sub.permissions?.can_manage_applications ?? true),
+            can_edit_company_profile: Boolean(sub.permissions?.can_edit_company_profile ?? (rolePreset === 'team_admin')),
+            quota_mode: sub.permissions?.quota_mode || 'shared'
+          };
+
+          await connection.query(`
+            INSERT INTO sub_recruiters (
+              main_recruiter_id, sub_recruiter_id, company_id,
+              designation, role_preset, permissions, status
+            ) VALUES (?, ?, ?, ?, ?, ?, 'active')
+          `, [
+            targetMasterId,
+            subUserId,
+            realCompanyId,
+            sub.designation || 'Recruiter',
+            rolePreset,
+            JSON.stringify(finalPermissions)
+          ]);
+
+          createdSubs.push({
+            id: subUserId,
+            name: sub.name.trim(),
+            email: sub.email.trim().toLowerCase(),
+            password: sub.password,
+            designation: sub.designation || 'Recruiter',
+            role_preset: rolePreset,
+            master_id: targetMasterId,
+            master_name: createdMasters.find(m => m.id === targetMasterId)?.name || 'Primary Master'
+          });
+        }
+      }
+
       await connection.commit();
 
-      // Send branded welcome email with login credentials and logo
+      // Send branded welcome email with login credentials and logo to primary recruiter
       sendRecruiterWelcomeEmail({
         email: email.trim().toLowerCase(),
         password,
         name: `${firstName} ${lastName}`.trim() || recruiter_name || 'Recruiter',
         companyName: company_name || 'Company',
         roleType: 'recruiter',
-        designation: 'Primary Recruiter',
+        designation: designation || 'Primary Recruiter',
         seatQuota: subRecruiterLimit
       }).catch(err => console.error("[createRecruiter] Email dispatch error:", err));
+
+      // Send emails to extra master recruiters
+      for (const extraMaster of createdMasters.slice(1)) {
+        sendRecruiterWelcomeEmail({
+          email: extraMaster.email,
+          password: extraMaster.password,
+          name: extraMaster.name,
+          companyName: company_name || 'Company',
+          roleType: 'master_recruiter',
+          designation: extraMaster.designation || 'Master Recruiter',
+          seatQuota: extraMaster.allocated_seats
+        }).catch(err => console.error("[createRecruiter] Extra master email error:", err));
+      }
+
+      // Send emails to sub-recruiters
+      for (const sub of createdSubs) {
+        sendRecruiterWelcomeEmail({
+          email: sub.email,
+          password: sub.password,
+          name: sub.name,
+          companyName: company_name || 'Company',
+          roleType: 'sub_recruiter',
+          designation: sub.designation || 'Recruiter',
+          inviterName: sub.master_name || company_name || 'Hiring Lead'
+        }).catch(err => console.error("[createRecruiter] Sub-recruiter email error:", err));
+      }
 
       return {
         recruiter_id: newUserId,
@@ -791,7 +980,9 @@ const RecruiterManagementModel = {
         subscription_status,
         expiry_date: formattedExpiry,
         master_login_limit: masterLoginLimit,
-        sub_recruiter_limit: subRecruiterLimit
+        sub_recruiter_limit: subRecruiterLimit,
+        created_masters: createdMasters,
+        created_sub_recruiters: createdSubs
       };
     } catch (error) {
       await connection.rollback();
