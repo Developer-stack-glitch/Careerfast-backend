@@ -13,11 +13,21 @@ const convertUTCDateToLocalDate = (date) => {
 };
 
 const verifyToken = (req, res, next) => {
+  let token = null;
   const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1]; // Extract Bearer token
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+  } else if (authHeader) {
+    token = authHeader;
+  } else if (req.headers["x-access-token"]) {
+    token = req.headers["x-access-token"];
+  } else if (req.headers.cookie) {
+    const match = req.headers.cookie.match(/(?:^|;\s*)AccessToken=([^;]*)/);
+    if (match) token = decodeURIComponent(match[1]);
+  }
 
   if (!token) {
-    return res.status(401).json({ message: "No token provided" });
+    return res.status(401).json({ success: false, error: "No token provided", message: "No token provided" });
   }
 
   // Verify the token

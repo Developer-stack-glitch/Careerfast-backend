@@ -3,19 +3,44 @@ let coursesCache = new Map();
 const COURSES_CACHE_TTL = 5 * 60 * 1000;
 
 const CourseModel = {
+    checkSlugExists: async (slug, excludeId = null) => {
+        try {
+            if (!slug) return false;
+            let sql = "SELECT id FROM courses WHERE slug = ?";
+            const params = [slug];
+            if (excludeId) {
+                sql += " AND id != ?";
+                params.push(excludeId);
+            }
+            const [rows] = await db.execute(sql, params);
+            return rows.length > 0;
+        } catch (error) {
+            console.error("checkSlugExists DB Error:", error);
+            return false;
+        }
+    },
+
     create: async (title, description, link, imageBase64, content, slug, category) => {
         coursesCache.clear();
         const sql =
             "INSERT INTO courses (title, description, link, image, content, slug, category) VALUES (?, ?, ?, ?, ?, ?, ?)";
         try {
-            const params = [title, description, link, imageBase64, content, slug, category]
+            const safeDescription = description !== undefined && description !== null ? description : "";
+            const safeLink = link !== undefined && link !== null ? link : "";
+
+            const params = [title, safeDescription, safeLink, imageBase64, content, slug, category]
                 .map(p => p === undefined ? null : p);
             
             const [result] = await db.execute(sql, params);
-            return { success: true, message: "Course added successfully", result };
+            return { 
+                success: true, 
+                message: "Course added successfully", 
+                result, 
+                id: result.insertId 
+            };
         } catch (error) {
-            console.error("DB Error:", error);
-            return { success: false, message: "Database error: " + error.message };
+            console.error("CourseModel.create DB Error:", error);
+            return { success: false, message: "Database error: " + error.message, error: error.message };
         }
     },
 
@@ -38,8 +63,8 @@ const CourseModel = {
             coursesCache.set(cacheKey, { data: rows, time: now });
             return { success: true, data: rows };
         } catch (error) {
-            console.error("DB Error:", error);
-            return { success: false, message: "Failed to fetch courses" };
+            console.error("CourseModel.getAll DB Error:", error);
+            return { success: false, message: "Failed to fetch courses", error: error.message };
         }
     },
 
@@ -49,8 +74,8 @@ const CourseModel = {
             if (rows.length === 0) return { success: false, message: "Course not found" };
             return { success: true, data: rows[0] };
         } catch (error) {
-            console.error("DB Error:", error);
-            return { success: false, message: "Failed to fetch course" };
+            console.error("CourseModel.getBySlug DB Error:", error);
+            return { success: false, message: "Failed to fetch course", error: error.message };
         }
     },
 
@@ -60,8 +85,8 @@ const CourseModel = {
             if (rows.length === 0) return { success: false, message: "Course not found" };
             return { success: true, data: rows[0] };
         } catch (error) {
-            console.error("DB Error:", error);
-            return { success: false, message: "Failed to fetch course" };
+            console.error("CourseModel.getById DB Error:", error);
+            return { success: false, message: "Failed to fetch course", error: error.message };
         }
     },
 
@@ -70,14 +95,17 @@ const CourseModel = {
         const sql =
             "UPDATE courses SET title=?, description=?, link=?, image=?, content=?, slug=?, category=? WHERE id=?";
         try {
-            const params = [title, description, link, imageBase64, content, slug, category, id]
+            const safeDescription = description !== undefined && description !== null ? description : "";
+            const safeLink = link !== undefined && link !== null ? link : "";
+
+            const params = [title, safeDescription, safeLink, imageBase64, content, slug, category, id]
                 .map(p => p === undefined ? null : p);
 
             const [result] = await db.execute(sql, params);
-            return { success: true, message: "Course updated successfully", result };
+            return { success: true, message: "Course updated successfully", result, id };
         } catch (error) {
-            console.error("DB Error:", error);
-            return { success: false, message: "Database error: " + error.message };
+            console.error("CourseModel.update DB Error:", error);
+            return { success: false, message: "Database error: " + error.message, error: error.message };
         }
     },
 
@@ -87,8 +115,8 @@ const CourseModel = {
             const [result] = await db.execute("DELETE FROM courses WHERE id = ?", [id]);
             return { success: true, message: "Course deleted successfully", result };
         } catch (error) {
-            console.error("DB Error:", error);
-            return { success: false, message: "Failed to delete course" };
+            console.error("CourseModel.deleteById DB Error:", error);
+            return { success: false, message: "Failed to delete course", error: error.message };
         }
     },
 };
@@ -101,4 +129,3 @@ setTimeout(() => {
 }, 1000);
 
 module.exports = CourseModel;
-
