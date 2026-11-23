@@ -59,6 +59,21 @@ const verifyJobPreviewToken = (jobId, token, authHeader) => {
   return false;
 };
 
+const cleanExpReqItem = (item) => {
+  if (!item) return "";
+  const str = String(item).trim();
+  if (/^0\s*[-–—to]\s*0(\s*(?:yrs|years?))?$/i.test(str) || str === "0" || str.toLowerCase() === "0 years" || str.toLowerCase() === "0 year") {
+    return "Fresher";
+  }
+  const sameMatch = str.match(/^(\d+)\s*[-–—to]\s*\1\s*(?:yrs|years?)?$/i);
+  if (sameMatch) {
+    const n = Number(sameMatch[1]);
+    if (n === 0) return "Fresher";
+    return `${n} Year${n !== 1 ? 's' : ''}`;
+  }
+  return str;
+};
+
 const insertJobNature = async (request, response) => {
   const { nature_name } = request.body;
   try {
@@ -484,9 +499,13 @@ const jobPosting = async (request, response) => {
     ? job_category
     : [job_category];
   const formattedSkills = Array.isArray(skills) ? skills : [skills];
-  const formattedExpReq = Array.isArray(experience_required)
+  const rawExpReq = Array.isArray(experience_required)
     ? experience_required.filter(x => x !== null && x !== undefined && String(x).trim() !== "")
     : (experience_required && String(experience_required).trim() !== "" ? [experience_required] : []);
+  const formattedExpReq = rawExpReq.map(cleanExpReqItem);
+  if (formattedExpReq.length === 1 && formattedExpReq[0] === "Fresher") {
+    experience_type = "Fresher";
+  }
   const formattedDiversity = Array.isArray(diversity_hiring)
     ? diversity_hiring
     : [diversity_hiring];
@@ -837,16 +856,17 @@ const handleCandidateApplicationConfirmation = async (postId, userId, formattedQ
           experienceRequired = parsedExp
             .filter(Boolean)
             .filter(s => typeof s === "string" && s.trim().length > 0)
+            .map(cleanExpReqItem)
             .join(", ");
         } else if (typeof parsedExp === "string") {
-          experienceRequired = parsedExp.trim();
+          experienceRequired = cleanExpReqItem(parsedExp.trim());
         }
       } catch (_) {
-        experienceRequired = String(job.experience_required).replace(/[\[\]"]/g, "").trim();
+        experienceRequired = cleanExpReqItem(String(job.experience_required).replace(/[\[\]"]/g, "").trim());
       }
     }
     if ((!experienceRequired || experienceRequired === '""') && job.experience_type) {
-      experienceRequired = String(job.experience_type).trim();
+      experienceRequired = cleanExpReqItem(String(job.experience_type).trim());
     }
     if (!experienceRequired || experienceRequired === '""') {
       experienceRequired = "Not Specified";
@@ -1695,9 +1715,13 @@ const updateEligibility = async (request, response) => {
     bonus_amount,
     bonus_format,
   } = request.body;
-  const formattedExpReq = Array.isArray(experience_required)
+  const rawExpReq = Array.isArray(experience_required)
     ? experience_required.filter(x => x !== null && x !== undefined && String(x).trim() !== "")
     : (experience_required && String(experience_required).trim() !== "" ? [experience_required] : []);
+  const formattedExpReq = rawExpReq.map(cleanExpReqItem);
+  if (formattedExpReq.length === 1 && formattedExpReq[0] === "Fresher") {
+    experience_type = "Fresher";
+  }
   const formattedDiversity = Array.isArray(diversity_hiring)
     ? diversity_hiring
     : [diversity_hiring];
@@ -2275,9 +2299,13 @@ const updateJobPosting = async (request, response) => {
   const formattedDuration = Array.isArray(duration_period) ? duration_period : (duration_period ? [duration_period] : ["Permanent"]);
   const formattedJobCategory = Array.isArray(job_category) ? job_category : (job_category ? [job_category] : []);
   const formattedSkills = Array.isArray(skills) ? skills : (skills ? [skills] : []);
-  const formattedExpReq = Array.isArray(experience_required)
+  const rawExpReq = Array.isArray(experience_required)
     ? experience_required.filter(x => x !== null && x !== undefined && String(x).trim() !== "")
     : (experience_required && String(experience_required).trim() !== "" ? [experience_required] : []);
+  const formattedExpReq = rawExpReq.map(cleanExpReqItem);
+  if (formattedExpReq.length === 1 && formattedExpReq[0] === "Fresher") {
+    experience_type = "Fresher";
+  }
   const formattedDiversity = Array.isArray(diversity_hiring) ? diversity_hiring : (diversity_hiring ? [diversity_hiring] : []);
   const formattedBenefits = Array.isArray(benefits) ? benefits : (benefits ? [benefits] : []);
   const formatQuestions = Array.isArray(questions)
