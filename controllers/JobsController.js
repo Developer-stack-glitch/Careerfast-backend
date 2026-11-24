@@ -71,6 +71,20 @@ const cleanExpReqItem = (item) => {
     if (n === 0) return "Fresher";
     return `${n} Year${n !== 1 ? 's' : ''}`;
   }
+  const rangeMatch = str.match(/^(\d+)\s*[-–—to]\s*(\d+)\s*(?:yrs|years?)?$/i);
+  if (rangeMatch) {
+    const min = Number(rangeMatch[1]);
+    const max = Number(rangeMatch[2]);
+    if (min === 0 && max === 0) return "Fresher";
+    if (min === max) return `${min} Year${min !== 1 ? 's' : ''}`;
+    return `${min}-${max} Years`;
+  }
+  const singleMatch = str.match(/^(\d+)\s*(?:yrs|years?)?$/i);
+  if (singleMatch) {
+    const n = Number(singleMatch[1]);
+    if (n === 0) return "Fresher";
+    return `${n} Year${n !== 1 ? 's' : ''}`;
+  }
   return str;
 };
 
@@ -865,11 +879,16 @@ const handleCandidateApplicationConfirmation = async (postId, userId, formattedQ
         experienceRequired = cleanExpReqItem(String(job.experience_required).replace(/[\[\]"]/g, "").trim());
       }
     }
-    if ((!experienceRequired || experienceRequired === '""') && job.experience_type) {
-      experienceRequired = cleanExpReqItem(String(job.experience_type).trim());
-    }
-    if (!experienceRequired || experienceRequired === '""') {
-      experienceRequired = "Not Specified";
+    if (!experienceRequired || experienceRequired === '""' || /^experience[d]?$/i.test(experienceRequired)) {
+      if (job.apply_link) {
+        const linkMatch = job.apply_link.match(/(\d+)[-\s]*(?:to|–|-)[-\s]*(\d+)[-\s]*(?:years?|yrs?)/i);
+        if (linkMatch) {
+          experienceRequired = `${linkMatch[1]}-${linkMatch[2]} Years`;
+        }
+      }
+      if (!experienceRequired || /^experience[d]?$/i.test(experienceRequired)) {
+        experienceRequired = String(job.experience_type || "").toLowerCase() === "fresher" ? "Fresher" : "1-3 Years";
+      }
     }
 
     const applicationRef = `CF-APP-${postId}-${userId}`;
