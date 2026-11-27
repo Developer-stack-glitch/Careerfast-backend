@@ -407,6 +407,8 @@ router.post(
 router.post("/applyJob", applyJob);
 
 // Token management routes
+const SeoController = require("../controllers/SeoController");
+router.get("/seo/sitemap-data", SeoController.getSitemapData);
 router.use("/token", tokenRoutes);
 router.use("/blogs", blogRoutes);
 
